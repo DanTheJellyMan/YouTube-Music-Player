@@ -1,0 +1,225 @@
+.player {
+    container: player / size;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(30px, 0.12fr) 0.74fr minmax(30px, 0.12fr);
+
+    min-width: 150px;
+    width: 200px;
+    max-width: 100%;
+    min-height: 200px;
+    height: 300px;
+    max-height: 100%;
+    resize: both;
+    overflow: auto;
+    scrollbar-width: thin;
+
+    color: white;
+    background-color: hsl(0, 30%, 10%);
+    border: 8px ridge white;
+    border-top: 4px ridge white;
+    border-radius: 4px;
+}
+.player.active {
+    filter: brightness(90%) blur(1px);
+}
+
+.grabbable:hover {
+    cursor: grab;
+}
+.grabbable:active {
+    cursor: grabbing;
+}
+.player > .header {
+    display: grid;
+    grid-template-columns: 0.75fr 0.25fr;
+    grid-template-rows: 1fr;
+    background-color: gray;
+}
+
+.header > .close {
+    order: 1;
+    background-color: red;
+    cursor: pointer;
+}
+
+.player > .main {
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    grid-template-columns: 1fr;
+    grid-template-rows: 0.231fr 0.385fr 0.077fr 0.1fr 0.11fr;
+    gap: 10px;
+}
+
+.main > .title {
+    width: 87.5%;
+    font-size: 1.5rem;
+    text-align: center;
+    padding: 1rem 0;
+    overflow-wrap: break-word;
+}
+
+.main > .thumbnail {
+    align-self: center;
+    width: 50%;
+    max-width: 300px;
+    max-height: 300px;
+    aspect-ratio: 4/3;
+    background-color: hsla(0,0%,100%,0.3);
+    border-radius: 10px;
+    object-fit: cover;
+}
+.main > .thumbnail.hidden {
+    filter: blur(0.8rem) brightness(75%) contrast(130%) saturate(140%);
+}
+.main > .thumbnail.fully-hidden {
+    filter: brightness(0%);
+}
+.main > .thumbnail:hover {
+    cursor: pointer;
+}
+
+.main > .author {
+    text-align: center;
+}
+
+.main > .timeline {
+    display: grid;
+    justify-items: center;
+    align-items: center;
+    grid-template-columns: 0.2fr 0.6fr 0.2fr;
+    grid-template-rows: 1fr;
+    gap: 3px;
+
+    width: fit-content;
+    padding: 0.125rem 0.5rem;
+    background-color: hsla(120, 60%, 35%);
+}
+
+.main > .timeline > .time-label {
+    min-width: fit-content;
+    width: 3ch;
+    text-align: center;
+    vertical-align: middle;
+    font-style: italic;
+}
+
+.main > .timeline > .progress {
+    width: 100%;
+    padding: 0.25rem 0.35rem;
+}
+
+.main > .controls {
+    display: grid;
+    justify-content: center;
+    align-items: center;
+    grid-template-columns: 0.25fr 0.31fr 0.25fr;
+    grid-template-rows: 1fr;
+    gap: 10px;
+    align-self: end;
+
+    min-width: 75px;
+    width: 70%;
+    max-width: 450px;
+    height: 100%;
+    padding: 6px 3px;
+
+    background-color: hsla(0,70%,50%,0.3);
+    border-radius: 5px;
+    user-select: none;
+}
+.main > .controls > * {
+    padding: 0.35rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 50%;
+    aspect-ratio: 1/1;
+}
+.main > .controls > *:active {
+    transition: all 25ms linear;
+    background-color: hsla(0,0%,100%,0.4);
+}
+
+.main > .controls > .track.previous {
+    scale: -1;
+}
+
+.main > .controls > .play-button > img {
+    width: 100%;
+    font-size: 0;
+    object-position: 50% 50%;
+}
+.main > .controls > .play-button.paused > img {
+    object-position: 75% 50%;
+}
+.main > .controls > .play-button:hover {
+    cursor: pointer;
+}
+
+.player > .footer {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding-top: 5px;
+    background-color: transparent;
+    border-top: 2px solid hsla(170, 50%, 40%, 0.2);
+}
+
+.player > .footer > .settings {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: fit-content;
+    min-height: 35px;
+    height: 150%;
+    max-height: 150px;
+    padding: 5px;
+    border-radius: 50%;
+}
+.player > .footer > .settings:active {
+    transition: all 25ms linear;
+    background-color: hsla(0,0%,100%,0.4);
+}
+
+img {
+    max-width: 100%;
+    max-height: 100%;
+    cursor: pointer;
+    object-fit: contain;
+    text-align: center;
+    font-size: x-small;
+    font-style: italic;
+}
+
+@container player (max-width: 400px) {
+    .player > .main > .title {
+        font-size: 1.25rem;
+    }
+    .player > .main > .thumbnail {
+        padding: 1px;
+    }
+}
+@container player (max-width: 275px) {
+    .player > .main > .title {
+        font-size: 0.8rem;
+    }
+    .player > .main > .author {
+        font-size: 0.7rem;
+    }
+    .player > .main > .timeline > .time-label {
+        font-size: 0.85ch;
+    }
+
+    .player > .main > .controls {
+        gap: 2px;
+    }
+    .player > .main > .controls > * {
+        padding: 2px;
+    }
+}

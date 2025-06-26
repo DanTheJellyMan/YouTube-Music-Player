@@ -1,0 +1,7 @@
+node_modules/
+ssl_cert/*
+user_playlists/*
+YouTube_API_key.txt
+package.json
+package-lock.json
+user_data.db

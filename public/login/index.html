@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Player</title>
+    <link rel="icon" type="image/png" href="../favicon.png">
+    <link rel="stylesheet" href="./login.css">
+    <script defer src="./login.js"></script>
+</head>
+<body>
+    <h1>Welcome!</h1>
+    
+    <div id="login-signup-box">
+        <label for="username">
+            Username:
+            <input id="username" placeholder="e.g. My_Username777" minlength="2" maxlength="100">
+        </label>
+        
+        <label for="password">
+            Password:
+            <input id="password" type="password" placeholder="e.g. password1234..." minlength="2" maxlength="100">
+        </label>
+
+        <div id="login-signup-input">
+            <div class="login">
+                <button onclick="account('/login')">Login</button>
+            </div>
+            <div class="signup">
+                <button onclick="account('/signup')">Signup</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

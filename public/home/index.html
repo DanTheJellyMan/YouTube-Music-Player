@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Music Player</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="../favicon.png">
+    <link rel="stylesheet" href="./home.css">
+    <link rel="stylesheet" href="./player.css">
+    <script src="./hls.light.min.js"></script>
+    <script defer src="./home.js"></script>
+    <script defer src="./player.js"></script>
+    <script defer src="./player_component.js"></script>
+</head>
+<body>
+    <div id="toggle-menu">
+        <div class="shadow"></div>
+        <img draggable="false" alt="Toggle menu" src="./assets/toggle-menu.webp" />
+    </div>
+
+    <main>
+        <h1>Your Playlists:</h1>
+        
+        <div id="playlist-list-header">
+            <h3>Add new playlist:</h3>
+
+            <abbr id="add-new-playlist" title="Upload playlist" onclick="toggleForm()">
+                <div id="open-playlist-form" class="cross">
+                    <div></div>
+                    <div></div>
+                </div>
+            </abbr>
+
+            <button id="reload-list" onclick="fetchPlaylists()">Reload</button>
+        </div>
+
+        <div id="playlist-list">
+        </div>
+
+        <div id="playlist-upload-form">
+            <abbr title="Close" class="cross" onclick="toggleForm()">
+                <div></div>
+                <div></div>
+            </abbr>
+            
+            <label for="playlist-input">
+                Please input a valid YouTube playlist URL
+                </br>&nbsp;&nbsp;
+                <input id="playlist-input" type="url" placeholder="e.g. youtube.com/playlist?list=a55l0v3r" maxlength="125">
+            </label>
+            
+            <button onclick="uploadPlaylist()">Upload</button>
+        </div>
+    </main>
+</body>
+</html>
