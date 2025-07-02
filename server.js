@@ -6,6 +6,10 @@
 
     There may or may not be a possibility that if someone passes the user auth middleware,
     could access another user's playlist(s)
+
+    TODO (for the future):
+        Add a logger class, which prints to console and stores all logs,
+        as well as serves them remotely for remote access to server.
 */
 
 const PARENT_DIR = require.main.path;
@@ -45,7 +49,7 @@ app.use((req, res, next) => {
             return next();
         }
     }
-    // Login to existing account or account creation
+    // Account login or account creation
     if (req.method === "POST") {
         if (p.startsWith("/login") || p.startsWith("/signup")) {
             return next();
@@ -136,7 +140,7 @@ app.post("/upload-playlist", async (req, res) => {
     let url;
 
     try {
-        url = req.query.url.trim();
+        url = decodeURIComponent(req.query.url).trim();
         if (typeof url !== "string") {
             return res.status(401).send("Invalid URL input type")
         } else if (!url.startsWith("youtube.com/playlist?list=")) {
@@ -179,7 +183,7 @@ app.get("/play", (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0]["folder_name"];
-    const { playlist } = req.query;
+    const playlist = decodeURIComponent(req.query.playlist);
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.sendFile(`${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlist}\\playlist.m3u8`);
