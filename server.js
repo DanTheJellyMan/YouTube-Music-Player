@@ -1,3 +1,13 @@
+/*
+    Notes:
+
+    Current user auth in middleware, as well as /login and /signup routes, are vulnerable to SQL injections,
+    but do not pose a serious threat, as it would likely only cause access or modification to user_data.db.
+
+    There may or may not be a possibility that if someone passes the user auth middleware,
+    could access another user's playlist(s)
+*/
+
 const PARENT_DIR = require.main.path;
 const path = require("path");
 const fs = require("fs/promises");
@@ -6,7 +16,6 @@ const Database = require("better-sqlite3");
 const dbHandler = require("./modules/database_handler.js");
 const serverHelper = require("./modules/server_helpers.js");
 const playlistHandler = require("./modules/playlist_handler.js");
-const sessionHandler = require("./modules/session_handler.js");
 
 const cookieParser = require("cookie-parser");
 const express = require("express");
@@ -19,20 +28,29 @@ const { USER_DB } = serverHelper.initServer(
     `${__dirname}\\ssl_cert`,
     `danthejellyman.men`
 );
-const sessionManager = new sessionHandler.Manager(USER_DB, "users");
 
 app.use(express.json());
 app.use(cookieParser());
 app.use((req, res, next) => {
-    // Allow login/signup routes to skip auth
-    // as well as / since it redirects
+    /* Allow specific routes to skip auth */
     const p = req.path;
-    if (p === "/" ||
-        p.includes("login") ||
-        p.includes("signup") ||
-        p.endsWith(".ico") ||
-        p.endsWith(".woff2")
-    ) return next();
+
+    // Automatically reroutes
+    if (p === "/") {
+        return next();
+    }
+    // Files and assets
+    if (req.method === "GET") {
+        if (p.endsWith(".ico") || p.endsWith(".woff2")) {
+            return next();
+        }
+    }
+    // Login to existing account or account creation
+    if (req.method === "POST") {
+        if (p.startsWith("/login") || p.startsWith("/signup")) {
+            return next();
+        }
+    }
 
     try {
         const { username, password } = req.cookies;
@@ -49,6 +67,8 @@ app.use(express.static(path.join(__dirname, "public"), {
         res.setHeader("Cache-Control",
             "no-cache, max-age=0, must-revalidate"
         );
+
+        // Custom headers
         switch (path.extname(filepath).toLowerCase()) {
             case ".js":
             case ".html":
@@ -103,10 +123,9 @@ app.post("/signup", async (req, res) => {
 });
 
 app.get("/get-playlists", async (req, res) => {
-    const { username, password } = req.cookies;
+    const { username } = req.cookies;
     const user = dbHandler.find(USER_DB, "users", [
-        ["username", username],
-        ["password", password]
+        ["username", username]
     ])[0];
 
     res.status(200).json(JSON.parse(user["playlists_json"]));
@@ -117,7 +136,7 @@ app.post("/upload-playlist", async (req, res) => {
     let url;
 
     try {
-        url = req.body.url.trim();
+        url = req.query.url.trim();
         if (typeof url !== "string") {
             return res.status(401).send("Invalid URL input type")
         } else if (!url.startsWith("youtube.com/playlist?list=")) {
@@ -135,13 +154,10 @@ app.post("/upload-playlist", async (req, res) => {
         console.log(`${username} - Finished downloading playlist from URL:\t${url}`);
     } catch (err) {
         console.error(err);
-        try {
-            return res.status(401).send(err);
-        } catch (err) {}
     }
 });
 
-// REMOVE LATER
+// REMOVE ONCE PLAYLIST STORAGE DESIGN IS FINISHED
 app.post("/make-playlist", async (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", req.cookies.username]
@@ -157,30 +173,33 @@ app.post("/make-playlist", async (req, res) => {
     }
 });
 
-// For obtaining a playlist m3u8
-app.get("/play/:playlistName/:playerName", (req, res) => {
+// For obtaining a playlist .m3u8
+app.get("/play", (req, res) => {
     const { username } = req.cookies;
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0]["folder_name"];
-    const { playlistName, playerName } = req.params;
-
-    sessionManager.checkForFlush(username);
+    const { playlist } = req.query;
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.sendFile(`${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlistName}\\${playerName}.m3u8`);
+    res.sendFile(`${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlist}\\playlist.m3u8`);
 });
-// For obtaning a playlist m3u8's chunks (.ts)
-app.get("/play/:playlistName/:songName/:songChunk", (req, res) => {
+
+// For obtaning a playlist .m3u8's chunks (.ts)
+app.get("/play/:playlist/:song/:chunk", (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", req.cookies.username]
     ])[0]["folder_name"];
-    const { playlistName, songName, songChunk } = req.params;
+    const { playlist, song, chunk } = req.params;
+
     res.sendFile(
-        `${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlistName}\\${songName}\\${songChunk}`
+        `${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlist}\\${song}\\${chunk}`
     );
 });
 
+// Simple route to allow client to measure latency, to determine
+// what quality of assets (currently for thumbnails) to load
+// (a bit flawed, since thumbnails are loaded from YouTube and not this server, so latency could be quite different)
 app.get("/ping", (req, res) => res.status(200).end());
 
 app.use((req, res) => res.status(404).send("Not found"));
@@ -188,7 +207,9 @@ app.use((req, res) => res.status(404).send("Not found"));
 
 
 /**
- * Send login credentials in cookies for quick login next time
+ * Set login credentials in cookies for quick login next time
+ * 
+ * (Not secure, should ideally create session tokens instead, but idgaf)
  * @param {Response<any, Record<string, any>} res 
  * @param {string} username 
  * @param {string} password 
