@@ -11,8 +11,8 @@ const sessionHandler = require("./modules/session_handler.js");
 const cookieParser = require("cookie-parser");
 const express = require("express");
 const generalHelpers = require("./modules/general_helpers.js");
-const PORT = 3000;
 const app = express();
+const PORT = 3000;
 const { USER_DB } = serverHelper.initServer(
     app,
     PORT,
@@ -141,6 +141,7 @@ app.post("/upload-playlist", async (req, res) => {
     }
 });
 
+// REMOVE LATER
 app.post("/make-playlist", async (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", req.cookies.username]
