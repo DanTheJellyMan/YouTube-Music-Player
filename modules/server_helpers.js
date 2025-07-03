@@ -28,12 +28,10 @@ function initServer(app, PORT, httpsCredDir, domainName) {
 
     const httpsCred = {
         "key": readFileSync(
-            `${httpsCredDir}\\${domainName}-key.pem`,
-            { encoding: "utf8" }
+            path.join(httpsCredDir, `${domainName}-key.pem`), { encoding: "utf8" }
         ),
         "cert": readFileSync(
-            `${httpsCredDir}\\${domainName}-cert.pem`,
-            { encoding: "utf8" }
+            path.join(httpsCredDir, `${domainName}-cert.pem`), { encoding: "utf8" }
         )
     }
     const server = require("https").createServer(
@@ -49,6 +47,8 @@ function initServer(app, PORT, httpsCredDir, domainName) {
     return { USER_DB, server };
 }
 
+// TODO: rework to make commands feel more like writing javascript (maybe use more eval)
+//       to make multi-parameter function calls easier to do
 function setTerminalListeners(USER_DB) {
     const commands = {
         "print": console.log,
@@ -229,17 +229,13 @@ async function signUp(db, table, username, password) {
 
     // Create a folder for user
     let folder_name = username;
-    let success = await createFolder(`${PARENT_DIR}\\user_playlists\\${username}`);
+    let success = await createFolder(path.join(PARENT_DIR, "user_playlists", username));
 
     while (success === null) {
         // Set folder name to a random number
-        const num = (Math.random()*Math.random()*Date.now()+"")
-                    .split("").filter(char => char !== ".")
-                    .join("").substring(0, 20);
-        folder_name = num.substring(0, 20);
-        success = await createFolder(
-            `${PARENT_DIR}\\user_playlists\\${folder_name}`
-        )
+        const num = Math.random() * Math.random() * Date.now();
+        folder_name = num.toString().replaceAll(".", "").substring(0, 20);
+        success = await createFolder(path.join(PARENT_DIR, "user_playlists", folder_name));
     }
 
     addRow(db, table, [

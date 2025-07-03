@@ -29,7 +29,7 @@ const PORT = 3000;
 const { USER_DB } = serverHelper.initServer(
     app,
     PORT,
-    `${__dirname}\\ssl_cert`,
+    path.join(PARENT_DIR, "ssl_cert")
     `danthejellyman.men`
 );
 
@@ -65,7 +65,7 @@ app.use((req, res, next) => {
     }
     return next();
 });
-app.use(express.static(path.join(__dirname, "public"), {
+app.use(express.static(path.join(PARENT_DIR, "public"), {
     setHeaders(res, filepath) {
         // Default Headers
         res.setHeader("Cache-Control",
@@ -183,10 +183,12 @@ app.get("/play", (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0]["folder_name"];
-    const playlist = decodeURIComponent(req.query.playlist);
-
+    const playlistName = decodeURIComponent(req.query.playlist).trim();
+    const playlistPath = path.join(
+        PARENT_DIR, "user_playlists", userFolder, playlistName, "playlist.m3u8"
+    );
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.sendFile(`${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlist}\\playlist.m3u8`);
+    res.sendFile(playlistPath);
 });
 
 // For obtaning a playlist .m3u8's chunks (.ts)
@@ -194,11 +196,9 @@ app.get("/play/:playlist/:song/:chunk", (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", req.cookies.username]
     ])[0]["folder_name"];
-    const { playlist, song, chunk } = req.params;
-
-    res.sendFile(
-        `${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlist}\\${song}\\${chunk}`
-    );
+    const { playlist: playlistName, song, chunk } = req.params;
+    const chunkPath = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName, song, chunk);
+    res.sendFile(chunkPath);
 });
 
 // Simple route to allow client to measure latency, to determine

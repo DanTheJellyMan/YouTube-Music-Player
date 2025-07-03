@@ -1,5 +1,4 @@
 const fs = require("fs/promises");
-const { readdirSync } = require("fs");
 
 /**
  * Generate random integer between two integers

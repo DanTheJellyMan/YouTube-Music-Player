@@ -17,8 +17,11 @@
 const path = require("path");
 const fs = require("fs/promises");
 const { readFileSync } = require("fs");
+
 const { v4: uuid } = require("uuid");
+const Decimal = require("decimal.js");
 const { spawn } = require("child_process");
+
 const { find, update } = require("./database_handler.js");
 const { createFolder } = require("./general_helpers.js");
 
@@ -189,77 +192,42 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         ["username", username]
     ])[0]["folder_name"];
     const playlistName = path.basename(await createPlaylistFolder(userFolder));
-    
-    // Add playlist to user json db entry
-    (async function(){
-        const json = JSON.parse(find(db, table, [
-            ["username", username]
-        ])[0]["playlists_json"]);
+    addPlaylistToDB();
 
-        json.playlists.push({
-            "name": playlistName,
-            "progress": 0, // Amt of songs downloaded,
-            "done": false,
-            "songs": []
-        });
-        update(db, table, [
-            ["playlists_json", JSON.stringify(json)]
-        ], [ ["username", username] ]);
-    })();
-
-    // Log playlist details
     const videos = await parseYTLink(playlistUrl);
-    (function(){
-        const MAX_VIDEOS_TO_LOG = 3;
-        console.log(`${username} - Downloading playlist...(Length: ${videos.length})`);
-        if (videos.length > MAX_VIDEOS_TO_LOG) {
-            const shortened = JSON.stringify(videos.slice(0, MAX_VIDEOS_TO_LOG), null, 4);
-            console.log(
-                `${shortened.substring(0, shortened.length-2)},\n`+
-                `    ${videos.length-MAX_VIDEOS_TO_LOG} more videos...\n]`
-            );
-        } else console.log(videos);
-    })();
+    logPlaylist(videos);
 
-    // Download songs from playlist
+    // Download songs from YouTube playlist
     for (const song of videos) {
         const filename = uuid();
-        try {
-            // Add each song to its own folder
-            const playlistDir = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName);
+        
+        // Add each song to its own folder
+        const playlistDir = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName);
 
-            // Song folder
-            await fs.mkdir(`${playlistDir}\\${filename}`, { recursive: false });
-            if (await fs.access(`${playlistDir}\\${filename}`, fs.constants.F_OK)) {
-                throw Error(`Could not access folder ${filename} for whatever reason`);
-            }
-            await downloadVideo(
-                song.videoUrl,
-                playlistDir,
-                filename,
-                quality,
-                segmentTime
-            );
+        // Song folder
+        const songDir = path.join(playlistDir, filename);
+
+        try {
+            await fs.mkdir(songDir, { recursive: false });
+            await fs.access(songDir, fs.constants.F_OK); // Test that access to the song directory works
+            await downloadVideo(song.videoUrl, playlistDir, filename, quality, segmentTime);
 
             // Get song length from the m3u8 file
             song["length"] = parseSongLength(
-                await fs.readFile(
-                    `${playlistDir}\\${filename}\\${filename}.m3u8`,
-                    { "encoding": "utf8" }
-                )
+                await fs.readFile(path.join(songDir, `${filename}.m3u8`), { "encoding": "utf8" })
             );
             song["filename"] = filename;
             
-            // Update progress
-            const json = JSON.parse(
-                find(db, table, [ ["username", username] ])[0]["playlists_json"]
-            );
+            // JSON is read again in case errors happened and folders (aka. songs) were deleted
+            // (ultimately done for the simplicity of not having to manage a JSON variable)
+            const json = getUserPlaylists(db, table, username);
+
+            /* Update progress */
             let vidCount = 0;
-            for (let i=0; i<json.playlists.length; i++) {
-                const list = json.playlists[i];
-                if (list.name === playlistName) {
+            for (const playlist of json.playlists) {
+                if (playlist.name === playlistName) {
                     vidCount = ++json.playlists[i].progress;
-                    json.playlists[i].songs.push(song);
+                    playlist.songs.push(song);
                     break;
                 }
             }
@@ -267,45 +235,115 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
                 ["playlists_json", JSON.stringify(json)]
             ], [ ["username", username] ]);
 
-            // Check if there's an exceeding amount of videos
             if (vidCount >= maxVideos) break;
+
         } catch (err) {
-            const folderToRemove = path.join(
-                PARENT_DIR, "user_playlists", userFolder, playlistName, filename
-            );
-            try {
-                setTimeout(() => {
-                    fs.rm(folderToRemove, { "recursive": true, "force": true })
-                }, 1000);
-            } catch (e) {
-                console.error(
-                    Error(
-                        `ERROR WHILE TRYING TO REMOVE INVALID SONG FOLDER (${folderToRemove})`+
-                        `\n${e.message || e}`,
-                        { "cause": e.cause || err }
-                    )
-                );
-            }
-            console.error(Error(
-                `ERROR DURING VIDEO DOWNLOAD (${filename}, ${song.videoUrl})`+
-                `\n${err.message || err}\n`,
-                { "cause": err.cause }
-            ));
+            handleSongDownloadError(songDir, song, err);
         }
     }
 
     // Set downloaded playlist as done
-    const json = JSON.parse(find(db, table, [ ["username", username] ])[0]["playlists_json"]);
-    for (let i=0; i<json.playlists.length; i++) {
-        if (json.playlists[i].name === playlistName) {
-            json.playlists[i].done = true;
+    const json = getUserPlaylists(db, table, username);
+    for (const playlist of json) {
+        if (playlist.name === playlistName) {
+            playlist.done = true;
             break;
         }
     }
     update(db, table, [
         ["playlists_json", JSON.stringify(json)]
     ], [ ["username", username] ]);
-    return `${playlistName}`;
+
+    return playlistName;
+}
+
+/**
+ * Add playlist to user's JSON DB entry
+ * @param {BetterSQLite3.Database} db Database
+ * @param {string} table Table name
+ * @param {string} username
+ * @param {string} playlistName 
+ */
+function addPlaylistToDB(db, table, username, playlistName) {
+    const json = JSON.parse(
+        find(db, table, [
+            ["username", username]
+        ])[0]["playlists_json"]
+    );
+
+    json.playlists.push({
+        "name": playlistName,
+        "progress": 0, // Amt of songs downloaded,
+        "done": false,
+        "songs": []
+    });
+    
+    update(db, table, [
+        ["playlists_json", JSON.stringify(json)]
+    ], [ ["username", username] ]);
+}
+
+/**
+ * Convenience function to get user's playlists_json from DB
+ * @param {BetterSQLite3.Database} db Database
+ * @param {string} table Table name
+ * @param {string} username 
+ * @returns {any[]} Array of all playlists
+ */
+function getUserPlaylists(db, table, username) {
+    return JSON.parse(
+        find(db, table, [
+            ["username", username]
+        ])[0]["playlists_json"]
+    );
+}
+
+/**
+ * @param {string} folderToRemove Song's folder directory
+ * @param {Video} song 
+ * @param {Error} err 
+ */
+function handleSongDownloadError(folderToRemove, song, err) {
+    try {
+        // Timeout before removing failed songs, because errors were happening
+        // when trying to do this immediately 
+        setTimeout(() => {
+            fs.rm(folderToRemove, { "recursive": true, "force": true });
+        }, 1000);
+    } catch (e) {
+        console.error(
+            Error(
+                `ERROR WHILE TRYING TO REMOVE INVALID SONG FOLDER (${folderToRemove})`+
+                `\n${e.message || e}`,
+                { "cause": e.cause || err }
+            )
+        );
+    }
+    const filename = path.basename(folderToRemove);
+    console.error(
+        Error(
+            `ERROR DURING VIDEO DOWNLOAD (${filename}, ${song.videoUrl})\n${err.message || err}\n`,
+            { "cause": err.cause }
+        )
+    );
+}
+
+/**
+ * Log playlist details
+ * @param {Video[]} videos 
+ */
+function logPlaylist(videos) {
+    const MAX_VIDEOS_TO_LOG = 3;
+    console.log(`${username} - Downloading playlist...(Length: ${videos.length})`);
+    if (videos.length > MAX_VIDEOS_TO_LOG) {
+        const shortened = JSON.stringify(videos.slice(0, MAX_VIDEOS_TO_LOG), null, 4);
+        console.log(
+            `${shortened.substring(0, shortened.length-2)},\n`+
+            `    ${videos.length-MAX_VIDEOS_TO_LOG} more videos...\n]`
+        );
+    } else {
+        console.log(videos);
+    }
 }
 
 /**
@@ -325,17 +363,17 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
                 `--ignore-errors`, "--geo-bypass",
                 `-o`, `-`, // Export to stdout
                 `${url}`,
-            ], { "cwd": `${playlistDir}\\${filename}` });
+            ], { "cwd": path.join(playlistDir, filename) });
             if (!ytdlp.cmd.stdout) {
                 throw Error(`YT-DLP ERROR!\t${JSON.stringify(ytdlp, null, 4)}`)
             }
             
             ffmpeg = createCMD("ffmpeg", [
                 `-i`, `pipe:0`,
-                `-af`, `anlmdn=s=25`,
-                `-af`, `acompressor=ratio=2:threshold=-50dB:attack=1`, // Acts as Expander
-                `-af`, `acompressor=ratio=4.35:threshold=-36dB:attack=1:release=120`,
-                `-af`, `loudnorm=I=-17:LRA=10:TP=-0.5`,
+                `-af`, `anlmdn=s=25`, // Noise reduction
+                `-af`, `acompressor=ratio=2:threshold=-50dB:attack=1`, // Acts as an Expander
+                `-af`, `acompressor=ratio=4.35:threshold=-36dB:attack=1:release=120`, // Acts as a normal Compressor
+                `-af`, `loudnorm=I=-17:LRA=10:TP=-0.5`, // Loudness normalization
                 `-c:a`, `libmp3lame`, `-q:a`, `${quality}`,
                 `-f`, `hls`,
                 `-start_number`, `0`,
@@ -343,7 +381,7 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
                 `-hls_time`, `${segmentTime}`,
                 `-hls_segment_filename`, `${filename}_%05d.ts`,
                 `${filename}.m3u8`
-            ], { "cwd": `${playlistDir}\\${filename}` });
+            ], { "cwd": path.join(playlistDir, filename) });
             if (!ffmpeg.cmd.stdin) {
                 throw Error(`FFMPEG ERROR!\t${JSON.stringify(ffmpeg, null, 4)}`)
             }
@@ -403,14 +441,15 @@ async function createPlaylistFolder(userFolder) {
     let path, i = 0;
     do {
         if (i > 100_000) throw Error("ERROR: excessive playlist folder creation attempts");
-        path = await createFolder(
-            `${PARENT_DIR}\\user_playlists\\${userFolder}\\playlist_${i++}`
-        );
+        const playlistFolderDir = path.join(PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`);
+        path = await createFolder(playlistFolderDir);
     } while (path === null);
     return path;
 }
 
 /**
+ * DEPRECATED, REMOVE LATER
+ * 
  * Makes M3U8 playlist file
  * @param {*} playerName 
  * @param {*} userFolder 
@@ -419,6 +458,8 @@ async function createPlaylistFolder(userFolder) {
  * @returns 
  */
 async function makePlaylist(playerName, userFolder, playlistName, songNames) {
+    console.error("REMOVE THIS FUNCTION ASAP, IT'S OUTDATED");
+
     const playlistDir = `${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlistName}`;
 
     // Find any m3u8 segment length (target duration)
@@ -446,7 +487,7 @@ async function makePlaylist(playerName, userFolder, playlistName, songNames) {
     await fs.writeFile(m3u8_path, `${playlist_m3u8}\n#EXT-X-ENDLIST`);
     return m3u8_path;
 }
-
+// DEPRECATED, REMOVE LATER
 function calcAvgSegmentTime(m3u8) {
     let total = 0, count = 0, index = 0, lastIndex = 0;
     while (true) {
@@ -459,7 +500,7 @@ function calcAvgSegmentTime(m3u8) {
     const avg = Math.round(total / count);
     return avg;
 }
-
+// DEPRECATED, REMOVE LATER
 function adjustSongPaths(parent, m3u8) {
     let index = 0, lastIndex = 0;
     while (true) {
@@ -478,7 +519,7 @@ function adjustSongPaths(parent, m3u8) {
  * @param {SpawnOptionsWithoutStdio} options2 Typically contains { cwd: [PROCESS DIRECTORY] }
  * @returns {{"cmd": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} Resolve upon process close
  */
-function createCMD(command, options, options2 = {"cwd": __dirname}) {
+function createCMD(command, options, options2 = {"cwd": PARENT_DIR}) {
     let cmd;
     try {
         cmd = spawn(command, options, options2);
