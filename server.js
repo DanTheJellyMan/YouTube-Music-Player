@@ -7,7 +7,7 @@
     There may or may not be a possibility that if someone passes the user auth middleware,
     could access another user's playlist(s)
 
-    TODO (for the future):
+    TODO:
         Add a logger class, which prints to console and stores all logs,
         as well as serves them remotely for remote access to server.
 */

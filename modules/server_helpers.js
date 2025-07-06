@@ -126,7 +126,7 @@ function setTerminalListeners(USER_DB) {
 
 
 /**
- * @returns Copy of the requirements object
+ * @returns {userRequirements} Copy of the requirements object
  */
 function getLoginRequirements() {
     return structuredClone(userRequirements);

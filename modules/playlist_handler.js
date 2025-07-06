@@ -19,7 +19,8 @@ const fs = require("fs/promises");
 const { readFileSync } = require("fs");
 
 const { v4: uuid } = require("uuid");
-const Decimal = require("decimal.js");
+const { Decimal } = require("decimal.js");
+Decimal.set({ "precision": 500_000 });
 const { spawn } = require("child_process");
 
 const { find, update } = require("./database_handler.js");
@@ -188,11 +189,14 @@ async function fetchOptions(options) {
  * @returns {Promise<string>} Resolves folder name of playlist
  */
 async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, segmentTime = 10, maxVideos = 50) {
-    const userFolder = find(db, table, [
-        ["username", username]
-    ])[0]["folder_name"];
+    const { folder_name: userFolder } = getUserJSON(db, table, username);
     const playlistName = path.basename(await createPlaylistFolder(userFolder));
-    addPlaylistToDB();
+    addPlaylistToDB(db, table, username, playlistName);
+
+    const playlistTimestampsPath = path.join(
+        PARENT_DIR, "user_playlists", userFolder, playlistName, "playlistTimestamps.json"
+    );
+    await fs.writeFile(playlistTimestampsPath, "[]");
 
     const videos = await parseYTLink(playlistUrl);
     logPlaylist(videos);
@@ -200,11 +204,9 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     // Download songs from YouTube playlist
     for (const song of videos) {
         const filename = uuid();
-        
-        // Add each song to its own folder
-        const playlistDir = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName);
+        song["filename"] = filename;
 
-        // Song folder
+        const playlistDir = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName);
         const songDir = path.join(playlistDir, filename);
 
         try {
@@ -212,27 +214,16 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
             await fs.access(songDir, fs.constants.F_OK); // Test that access to the song directory works
             await downloadVideo(song.videoUrl, playlistDir, filename, quality, segmentTime);
 
-            // Get song length from the m3u8 file
-            song["length"] = parseSongLength(
-                await fs.readFile(path.join(songDir, `${filename}.m3u8`), { "encoding": "utf8" })
-            );
-            song["filename"] = filename;
+            await addPlaylistTimestamp(playlistTimestampsPath, path.join(songDir, `${filename}.m3u8`));
             
             // JSON is read again in case errors happened and folders (aka. songs) were deleted
             // (ultimately done for the simplicity of not having to manage a JSON variable)
-            const json = getUserPlaylists(db, table, username);
-
-            /* Update progress */
-            let vidCount = 0;
-            for (const playlist of json.playlists) {
-                if (playlist.name === playlistName) {
-                    vidCount = ++json.playlists[i].progress;
-                    playlist.songs.push(song);
-                    break;
-                }
-            }
+            const playlists = JSON.parse( getUserJSON(db, table, username).playlists_json );
+            const playlist = playlists.find(item => item.name === playlistName);
+            let vidCount = ++playlist.progress;
+            playlist.songs.push(song);
             update(db, table, [
-                ["playlists_json", JSON.stringify(json)]
+                ["playlists_json", JSON.stringify(playlists)]
             ], [ ["username", username] ]);
 
             if (vidCount >= maxVideos) break;
@@ -242,19 +233,80 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         }
     }
 
+    await setStartTimes(playlistTimestampsPath);
+
     // Set downloaded playlist as done
-    const json = getUserPlaylists(db, table, username);
-    for (const playlist of json) {
-        if (playlist.name === playlistName) {
-            playlist.done = true;
-            break;
-        }
-    }
+    const { playlists_json } = JSON.parse(getUserJSON(db, table, username));
+    playlists_json.find(item => item.name === playlistName).done = true;
     update(db, table, [
-        ["playlists_json", JSON.stringify(json)]
+        ["playlists_json", JSON.stringify(playlists_json)]
     ], [ ["username", username] ]);
 
     return playlistName;
+}
+
+/**
+ * startTime property must be manually set with setStartTimes()
+ * @param {string} playlistTimestampsPath 
+ * @param {string} songPath 
+ * @param {number} index Optional, used for inserting timestamp at specific index
+ * @returns {Promise<{"filename": string, "startTime": string, "length": string}>} Added timestamp
+ */
+async function addPlaylistTimestamp(playlistTimestampsPath, songPath, index = -1) {
+    const playlistTimestamps = JSON.parse(
+        await fs.readFile(playlistTimestampsPath, { "encoding": "utf8" })
+    );
+    const timestampInfo = {
+        "filename": path.basename(songPath),
+        "startTime": "-1",
+        "length": await getSongLength(songPath)
+    }
+
+    if (index === -1) {
+        playlistTimestamps.push(timestampInfo);
+    } else {
+        playlistTimestamps.splice(index, 0, timestampInfo);
+    }
+    await fs.writeFile(playlistTimestampsPath, JSON.stringify(playlistTimestamps));
+    return timestampInfo;
+}
+
+/**
+ * Writes to playlistTimestamps.json the proper start times for each song
+ * @param {string} playlistTimestampsPath 
+ * @returns {Promise<{"filename": string, "startTime": string, "length": string}[]>} Array of all timestamps
+ */
+async function setStartTimes(playlistTimestampsPath) {
+    const playlistTimestamps = JSON.parse(
+        await fs.readFile(playlistTimestampsPath, { "encoding": "utf8" })
+    );
+    
+    let totalDuration = new Decimal(0);
+    for (const timestamp of playlistTimestamps) {
+        timestamp.startTime = totalDuration.toString();
+        totalDuration = totalDuration.add(timestamp.length);
+    }
+
+    await fs.writeFile(playlistTimestampsPath, JSON.stringify(playlistTimestamps));
+    return playlistTimestamps;
+}
+
+/**
+ * @param {*} m3u8_path 
+ * @returns {Promise<string>} Length with arbitrary precision
+ */
+function getSongLength(m3u8_path) {
+    const commands = [
+        "-i", path.basename(m3u8_path),
+        "-show_entries", "format=duration",
+        "-v", "quiet", "-of", 'csv="p=0"'
+    ]
+    const cwd = path.dirname(m3u8_path);
+    const { cmd, done } = createCMD("ffprobe", commands, cwd);
+
+    let length = "";
+    cmd.stdout.on("data", data => length += data.toString().trim());
+    return done.then(() => length.trim());
 }
 
 /**
@@ -266,9 +318,7 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
  */
 function addPlaylistToDB(db, table, username, playlistName) {
     const json = JSON.parse(
-        find(db, table, [
-            ["username", username]
-        ])[0]["playlists_json"]
+        getUserJSON(db, table, username)["playlists_json"]
     );
 
     json.playlists.push({
@@ -284,17 +334,17 @@ function addPlaylistToDB(db, table, username, playlistName) {
 }
 
 /**
- * Convenience function to get user's playlists_json from DB
+ * Convenience function to get user entry from DB
  * @param {BetterSQLite3.Database} db Database
  * @param {string} table Table name
  * @param {string} username 
- * @returns {any[]} Array of all playlists
+ * @returns {{"username": string, "password": string, "folder_name": string, "playlists_json": string}}
  */
-function getUserPlaylists(db, table, username) {
+function getUserJSON(db, table, username) {
     return JSON.parse(
         find(db, table, [
             ["username", username]
-        ])[0]["playlists_json"]
+        ])[0]
     );
 }
 
@@ -398,10 +448,10 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             await ytdlp.done;
             await ffmpeg.done;
             cleanup();
-            return resolve(); 
+            resolve(); 
         } catch (err) {
             cleanup();
-            return reject(err);
+            reject(err);
         }
         function cleanup() {
             ytdlp.cmd.removeAllListeners();
@@ -413,53 +463,14 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
 }
 
 /**
- * Adds up lengths from the #EXTINF tags to total up to the song's full length
- * @param {string} m3u8 File contents of playlist file
- * @returns {number} Total length of m3u8 playlist (seconds)
- */
-function parseSongLength(m3u8) {
-    let total = 0;
-    let lastIndex = 0;
-    while (true) {
-        const index = m3u8.indexOf("#EXTINF", lastIndex);
-        if (index === -1) break;
-
-        const timeIndex = m3u8.indexOf(":", index) + 1;
-        const commaIndex = m3u8.indexOf(",", timeIndex);
-        total += parseFloat(m3u8.substring(timeIndex, commaIndex));
-        lastIndex = commaIndex;
-    }
-    return total;
-}
-
-/**
- * Create a playlist folder 
- * @param {string} userFolder 
- * @returns {Promise<userFolder>} Resolves to created folder's absolute path
- */
-async function createPlaylistFolder(userFolder) {
-    let path, i = 0;
-    do {
-        if (i > 100_000) throw Error("ERROR: excessive playlist folder creation attempts");
-        const playlistFolderDir = path.join(PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`);
-        path = await createFolder(playlistFolderDir);
-    } while (path === null);
-    return path;
-}
-
-/**
- * DEPRECATED, REMOVE LATER
- * 
- * Makes M3U8 playlist file
+ * Makes .m3u8 playlist file
  * @param {*} playerName 
  * @param {*} userFolder 
  * @param {*} playlistName 
  * @param {*} songNames 
  * @returns 
  */
-async function makePlaylist(playerName, userFolder, playlistName, songNames) {
-    console.error("REMOVE THIS FUNCTION ASAP, IT'S OUTDATED");
-
+async function makePlaylistFile(playerName, userFolder, playlistName, songNames) {
     const playlistDir = `${PARENT_DIR}\\user_playlists\\${userFolder}\\${playlistName}`;
 
     // Find any m3u8 segment length (target duration)
@@ -487,20 +498,6 @@ async function makePlaylist(playerName, userFolder, playlistName, songNames) {
     await fs.writeFile(m3u8_path, `${playlist_m3u8}\n#EXT-X-ENDLIST`);
     return m3u8_path;
 }
-// DEPRECATED, REMOVE LATER
-function calcAvgSegmentTime(m3u8) {
-    let total = 0, count = 0, index = 0, lastIndex = 0;
-    while (true) {
-        index = m3u8.indexOf("#EXTINF", lastIndex);
-        if (index === -1) break;
-        total += parseFloat(m3u8.substring(index+8, m3u8.indexOf(",", index+8)).trim());
-        count++;
-        lastIndex = index + 1;
-    }
-    const avg = Math.round(total / count);
-    return avg;
-}
-// DEPRECATED, REMOVE LATER
 function adjustSongPaths(parent, m3u8) {
     let index = 0, lastIndex = 0;
     while (true) {
@@ -510,6 +507,21 @@ function adjustSongPaths(parent, m3u8) {
         lastIndex = index+2;
     }
     return m3u8;
+}
+
+/**
+ * Create a playlist folder 
+ * @param {string} userFolder 
+ * @returns {Promise<userFolder>} Resolves to created folder's absolute path
+ */
+async function createPlaylistFolder(userFolder) {
+    let path, i = 0;
+    do {
+        if (i > 100_000) throw Error("ERROR: excessive playlist folder creation attempts");
+        const playlistFolderDir = path.join(PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`);
+        path = await createFolder(playlistFolderDir);
+    } while (path === null);
+    return path;
 }
 
 /**
