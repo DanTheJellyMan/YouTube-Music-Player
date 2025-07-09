@@ -1,5 +1,5 @@
 /**
- * @typedef {Object} Video
+ * @typedef {object} Video
  * @property {string} title
  * @property {string} channelName
  * @property {string} channelUrl
@@ -8,7 +8,7 @@
  */
 
 /**
- * @typedef {Object} Thumbnails
+ * @typedef {object} Thumbnails
  * @property {string} low
  * @property {string} medium
  * @property {string} high
@@ -27,7 +27,8 @@ const { find, update } = require("./database_handler.js");
 const { createFolder } = require("./general_helpers.js");
 
 const PARENT_DIR = require.main.path;
-const API_KEY = readFileSync(path.join(PARENT_DIR, "YouTube_API_key.txt"));
+const serverConfig = require("./server_config.js");
+const API_KEY = serverConfig.youtubeAPIKey;
 
 /**
  * Perform fetch request for playlist link, then only
@@ -52,42 +53,48 @@ async function parseYTLink(link, maxVideoLength = 45) {
     let nextPageToken = "";
     do {
         const controller = new AbortController();
-        let req, res;
+        let res, json;
         try {
             let timeout = setTimeout(() => controller.abort(), 1500);
-            req = await fetch(
+            res = await fetch(
                 `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${link}&maxResults=50&pageToken=${nextPageToken}&key=${API_KEY}`,
                 { "signal": controller.signal }
             );
             clearTimeout(timeout);
-            if (!req.ok) throw Error();
-            res = await req.json();
+            if (!res.ok) {
+                console.error(res);
+                throw Error();
+            }
+            json = await res.json();
 
             // Ignore excessively-lengthy items (that's what she said)
             timeout = setTimeout(() => controller.abort(), 3500);
-            const ids = res.items.map(vid => vid.snippet.resourceId.videoId).join(",");
-            req = await fetch(
+            const ids = json.items.map(vid => vid.snippet.resourceId.videoId).join(",");
+            res = await fetch(
                 `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${API_KEY}`,
                 { "signal": controller.signal }
             );
             clearTimeout(timeout);
-            if (!req.ok) throw Error();
-            const badIds = (await req.json()).items.map(vid => {
-                if (parseMinutes(vid.contentDetails.duration) > maxVideoLength) {
-                    return vid.id;
-                }
-            });
-            badIds.splice(badIds.indexOf(undefined), 1);
-            res.items = res.items.filter(vid => {
-                return !(new Set(badIds).has(vid.snippet.resourceId.videoId))
+            if (!res.ok) throw Error();
+            const badIds = (await res.json()).items
+                .map(vid => {
+                    if (parseMinutes(vid.contentDetails.duration) > maxVideoLength) {
+                        return vid.id;
+                    }
+                })
+                .filter(badId => badId !== undefined);
+            const badIdsSet = new Set(badIds);
+            json.items = json.items.filter(vid => {
+                return !badIdsSet.has(vid.snippet.resourceId.videoId)
             });
         } catch (err) {
+            console.error(err);
             controller.abort();
             continue;
         }
 
-        nextPageToken = res.nextPageToken;
-        links.push(...await filterInfo(res.items));
+        nextPageToken = json.nextPageToken;
+        links.push(...await filterInfo(json.items));
     } while (nextPageToken);
 
     return links;
@@ -199,7 +206,8 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     await fs.writeFile(playlistTimestampsPath, "[]");
 
     const videos = await parseYTLink(playlistUrl);
-    logPlaylist(videos);
+    console.log(videos);
+    logPlaylist(videos, username);
 
     // Download songs from YouTube playlist
     for (const song of videos) {
@@ -212,13 +220,15 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         try {
             await fs.mkdir(songDir, { recursive: false });
             await fs.access(songDir, fs.constants.F_OK); // Test that access to the song directory works
+            console.log("downloading...");
             await downloadVideo(song.videoUrl, playlistDir, filename, quality, segmentTime);
+            console.log("noice!");
 
             await addPlaylistTimestamp(playlistTimestampsPath, path.join(songDir, `${filename}.m3u8`));
             
             // JSON is read again in case errors happened and folders (aka. songs) were deleted
             // (ultimately done for the simplicity of not having to manage a JSON variable)
-            const playlists = JSON.parse( getUserJSON(db, table, username).playlists_json );
+            const playlists = getUserJSON(db, table, username).playlists_json;
             const playlist = playlists.find(item => item.name === playlistName);
             let vidCount = ++playlist.progress;
             playlist.songs.push(song);
@@ -236,7 +246,7 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     await setStartTimes(playlistTimestampsPath);
 
     // Set downloaded playlist as done
-    const { playlists_json } = JSON.parse(getUserJSON(db, table, username));
+    const playlists_json = JSON.parse(getUserJSON(db, table, username).playlists_json);
     playlists_json.find(item => item.name === playlistName).done = true;
     update(db, table, [
         ["playlists_json", JSON.stringify(playlists_json)]
@@ -259,7 +269,7 @@ async function addPlaylistTimestamp(playlistTimestampsPath, songPath, index = -1
     const timestampInfo = {
         "filename": path.basename(songPath),
         "startTime": "-1",
-        "length": await getSongLength(songPath)
+        "length": "2" // await getSongLength(songPath)
     }
 
     if (index === -1) {
@@ -280,7 +290,7 @@ async function setStartTimes(playlistTimestampsPath) {
     const playlistTimestamps = JSON.parse(
         await fs.readFile(playlistTimestampsPath, { "encoding": "utf8" })
     );
-    
+
     let totalDuration = new Decimal(0);
     for (const timestamp of playlistTimestamps) {
         timestamp.startTime = totalDuration.toString();
@@ -302,11 +312,16 @@ function getSongLength(m3u8_path) {
         "-v", "quiet", "-of", 'csv="p=0"'
     ]
     const cwd = path.dirname(m3u8_path);
-    const { cmd, done } = createCMD("ffprobe", commands, cwd);
+    console.log("GETTING LENGTH!");
+    const { cmd, done } = createCMD("ffprobe", commands, { cwd });
+    console.log(cmd, done);
 
     let length = "";
     cmd.stdout.on("data", data => length += data.toString().trim());
-    return done.then(() => length.trim());
+    return done.then(() => {
+        console.log("LENGTH: " + length);
+        return length.trim();
+    });
 }
 
 /**
@@ -317,19 +332,16 @@ function getSongLength(m3u8_path) {
  * @param {string} playlistName 
  */
 function addPlaylistToDB(db, table, username, playlistName) {
-    const json = JSON.parse(
-        getUserJSON(db, table, username)["playlists_json"]
-    );
-
-    json.playlists.push({
+    const playlists = JSON.parse(getUserJSON(db, table, username)["playlists_json"]);
+    console.log(playlists);
+    playlists.push({
         "name": playlistName,
         "progress": 0, // Amt of songs downloaded,
         "done": false,
         "songs": []
     });
-    
     update(db, table, [
-        ["playlists_json", JSON.stringify(json)]
+        ["playlists_json", JSON.stringify(playlists)]
     ], [ ["username", username] ]);
 }
 
@@ -341,11 +353,9 @@ function addPlaylistToDB(db, table, username, playlistName) {
  * @returns {{"username": string, "password": string, "folder_name": string, "playlists_json": string}}
  */
 function getUserJSON(db, table, username) {
-    return JSON.parse(
-        find(db, table, [
-            ["username", username]
-        ])[0]
-    );
+    return find(db, table, [
+        ["username", username]
+    ])[0];
 }
 
 /**
@@ -382,7 +392,7 @@ function handleSongDownloadError(folderToRemove, song, err) {
  * Log playlist details
  * @param {Video[]} videos 
  */
-function logPlaylist(videos) {
+function logPlaylist(videos, username = "") {
     const MAX_VIDEOS_TO_LOG = 3;
     console.log(`${username} - Downloading playlist...(Length: ${videos.length})`);
     if (videos.length > MAX_VIDEOS_TO_LOG) {
@@ -405,11 +415,12 @@ function logPlaylist(videos) {
  * @returns {Promise<void>}
  */
 function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10) {
+    console.log("url: "+url, "dir: "+playlistDir, "filename: "+filename, "quality: "+quality, "segmentT: "+segmentTime);
     return new Promise(async (resolve, reject) => {
         let ytdlp, ffmpeg;
         try {
             ytdlp = createCMD("yt-dlp", [
-                `-f`, `bestaudio`,
+                `-f`, `bestaudio[ext=m4a]`,
                 `--ignore-errors`, "--geo-bypass",
                 `-o`, `-`, // Export to stdout
                 `${url}`,
@@ -419,11 +430,13 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             }
             
             ffmpeg = createCMD("ffmpeg", [
+                "-f", "webm",
                 `-i`, `pipe:0`,
-                `-af`, `anlmdn=s=25`, // Noise reduction
-                `-af`, `acompressor=ratio=2:threshold=-50dB:attack=1`, // Acts as an Expander
-                `-af`, `acompressor=ratio=4.35:threshold=-36dB:attack=1:release=120`, // Acts as a normal Compressor
-                `-af`, `loudnorm=I=-17:LRA=10:TP=-0.5`, // Loudness normalization
+                `-af`,
+                `anlmdn=s=25,`+ // Noise reduction
+                `acompressor=ratio=2:threshold=-50dB:attack=1,`+ // Acts as an Expander
+                `acompressor=ratio=4.35:threshold=-36dB:attack=1:release=120,`+ // Acts as a normal Compressor
+                `loudnorm=I=-17:LRA=10:TP=-0.5`, // Loudness normalization
                 `-c:a`, `libmp3lame`, `-q:a`, `${quality}`,
                 `-f`, `hls`,
                 `-start_number`, `0`,
@@ -515,13 +528,13 @@ function adjustSongPaths(parent, m3u8) {
  * @returns {Promise<userFolder>} Resolves to created folder's absolute path
  */
 async function createPlaylistFolder(userFolder) {
-    let path, i = 0;
+    let folderPath, i = 0;
     do {
         if (i > 100_000) throw Error("ERROR: excessive playlist folder creation attempts");
         const playlistFolderDir = path.join(PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`);
-        path = await createFolder(playlistFolderDir);
-    } while (path === null);
-    return path;
+        folderPath = await createFolder(playlistFolderDir);
+    } while (folderPath === null);
+    return folderPath;
 }
 
 /**
@@ -531,7 +544,8 @@ async function createPlaylistFolder(userFolder) {
  * @param {SpawnOptionsWithoutStdio} options2 Typically contains { cwd: [PROCESS DIRECTORY] }
  * @returns {{"cmd": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} Resolve upon process close
  */
-function createCMD(command, options, options2 = {"cwd": PARENT_DIR}) {
+function createCMD(command, options, options2 = { "cwd": PARENT_DIR }) {
+    console.log("CREATE CMD", command, options, options2);
     let cmd;
     try {
         cmd = spawn(command, options, options2);
@@ -568,9 +582,7 @@ module.exports = {
     filterInfo,
     downloadPlaylist,
     downloadVideo,
-    parseSongLength,
     
     createPlaylistFolder,
-    makePlaylist,
     createCMD,
 };

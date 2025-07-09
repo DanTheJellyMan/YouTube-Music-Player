@@ -12,89 +12,58 @@
         as well as serves them remotely for remote access to server.
 */
 
-const PARENT_DIR = require.main.path;
 const path = require("path");
+const PARENT_DIR = require.main["path"];
+const modulesPath = path.join(PARENT_DIR, "modules");
 const fs = require("fs/promises");
 const Database = require("better-sqlite3");
 
-const dbHandler = require("./modules/database_handler.js");
-const serverHelper = require("./modules/server_helpers.js");
-const playlistHandler = require("./modules/playlist_handler.js");
+/**
+ * @type {import("./modules/database_handler.js")}
+ */
+const dbHandler = require(path.join(modulesPath, "database_handler.js"));
+
+/**
+ * @type {import("./modules/server_helpers.js")}
+ */
+const serverHelper = require(path.join(modulesPath, "server_helpers.js"));
+
+/**
+ * @type {import("./modules/playlist_handler.js")}
+ */
+const playlistHandler = require(path.join(modulesPath, "playlist_handler.js"));
+
+/**
+ * @type {import("./modules/general_helpers.js")}
+ */
+const generalHelpers = require(path.join(modulesPath, "general_helpers.js"));
+
+/**
+ * @type {import("./modules/server_config.js")}
+ */
+const serverConfig = require(path.join(modulesPath, "server_config.js"));
 
 const cookieParser = require("cookie-parser");
 const express = require("express");
-const generalHelpers = require("./modules/general_helpers.js");
-const app = express();
-const PORT = 3000;
-const { USER_DB } = serverHelper.initServer(
-    app,
-    PORT,
-    path.join(PARENT_DIR, "ssl_cert")
-    `danthejellyman.men`
-);
+const cors = require("cors");
 
+const app = express();
+const { USER_DB } = serverHelper.initServer(app);
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (serverConfig.corsWhitelist.includes(origin) || origin === undefined) {
+            return callback(null, true);
+        }
+        return callback(`Blocked by CORS [${origin}]`);
+    }
+}));
 app.use(express.json());
 app.use(cookieParser());
-app.use((req, res, next) => {
-    /* Allow specific routes to skip auth */
-    const p = req.path;
-
-    // Automatically reroutes
-    if (p === "/") {
-        return next();
-    }
-    // Files and assets
-    if (req.method === "GET") {
-        if (p.endsWith(".ico") || p.endsWith(".woff2")) {
-            return next();
-        }
-    }
-    // Account login or account creation
-    if (req.method === "POST") {
-        if (p.startsWith("/login") || p.startsWith("/signup")) {
-            return next();
-        }
-    }
-
-    try {
-        const { username, password } = req.cookies;
-        const exists = serverHelper.checkLogin(USER_DB, "users", username, password);
-        if (!exists) return res.redirect("/login");
-    } catch (err) {
-        return res.redirect("/login");
-    }
-    return next();
-});
+app.use(userAuthMiddleware);
 app.use(express.static(path.join(PARENT_DIR, "public"), {
     setHeaders(res, filepath) {
-        // Default Headers
-        res.setHeader("Cache-Control",
-            "no-cache, max-age=0, must-revalidate"
-        );
-
-        // Custom headers
-        switch (path.extname(filepath).toLowerCase()) {
-            case ".js":
-            case ".html":
-            case ".css":
-            case ".ico":
-            case ".webp":
-            case ".gif":
-                res.setHeader("Cache-Control",
-                    "no-cache, max-age=0, must-revalidate"
-                );
-                break;
-            case ".woff2":
-                res.setHeader("Cache-Control",
-                    "public, proxy-revalidate, immutable, s-maxage=604800"
-                );
-                break;
-        }
-        if (filepath.toLowerCase().includes("hls")) {
-            res.setHeader("Cache-Control",
-                "public, proxy-revalidate, immutable, s-maxage=604800"
-            );
-        }
+        httpHeaderMiddleware(res, filepath);
     }
 }));
 
@@ -104,24 +73,19 @@ app.post("/login", (req, res) => {
     const { username, password } = req.body;
     const exists = serverHelper.checkLogin(USER_DB, "users", username, password);
     if (!exists) {
-        res.status(401).send(
-            `No user found with given login credentials:\n${JSON.stringify(
-                { username, password },
-                null,
-                4
-            )}`
+        return res.status(401).send(
+            `No user found with given login credentials:\n`+
+            JSON.stringify({ username, password }, null, 4)
         );
-        return;
     }
-    
     loginCookies(res, username, password);
     res.status(200).send("Login successful");
 });
 
 app.post("/signup", async (req, res) => {
-    const { username, password } = req.body;
+    const username = decodeURIComponent(req.body.username);
+    const password = decodeURIComponent(req.body.password);
     const { ok, status, text } = await serverHelper.signUp(USER_DB, "users", username, password);
-
     if (ok) loginCookies(res, username, password);
     res.status(status).send(text);
 });
@@ -131,7 +95,6 @@ app.get("/get-playlists", async (req, res) => {
     const user = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0];
-
     res.status(200).json(JSON.parse(user["playlists_json"]));
 });
 
@@ -149,15 +112,13 @@ app.post("/upload-playlist", async (req, res) => {
             res.status(200).send("Downloading playlist");
         }
 
-        await playlistHandler.downloadPlaylist(USER_DB, "users", username,
-            url,
-            6,
-            10,
-            (username.includes("damndaniel")) ? 500 : 50
+        await playlistHandler.downloadPlaylist(USER_DB, "users", username, url,
+            3, 10, username.includes("damndaniel") ? 50 : 50
         );
         console.log(`${username} - Finished downloading playlist from URL:\t${url}`);
     } catch (err) {
         console.error(err);
+        if (!res.headersSent) res.status(401).end();
     }
 });
 
@@ -209,6 +170,64 @@ app.get("/ping", (req, res) => res.status(200).end());
 app.use((req, res) => res.status(404).send("Not found"));
 
 
+
+function userAuthMiddleware(req, res, next) {
+    /* Allow specific routes to skip auth */
+    const p = req.path;
+    
+    if (p === "/") { // Automatically reroutes
+        return next();
+    }
+    if (p.startsWith("/login") || p.startsWith("/signup")) {
+        return next();
+    }
+    
+    if (req.method === "GET") { // Files and assets
+        if (p.endsWith(".ico") || p.endsWith(".woff2")) {
+            return next();
+        }
+    }
+
+    try {
+        const { username, password } = req.cookies;
+        const exists = serverHelper.checkLogin(USER_DB, "users", username, password);
+        if (!exists) return res.redirect("/login");
+    } catch (err) {
+        return res.redirect("/login");
+    }
+    return next();
+}
+
+function httpHeaderMiddleware(res, filepath) {
+    // Default Headers
+    res.setHeader("Cache-Control",
+        "no-cache, max-age=0, must-revalidate"
+    );
+
+    // Custom headers
+    switch (path.extname(filepath).toLowerCase()) {
+        case ".js":
+        case ".html":
+        case ".css":
+        case ".ico":
+        case ".webp":
+        case ".gif":
+            res.setHeader("Cache-Control",
+                "no-cache, max-age=0, must-revalidate"
+            );
+            break;
+        case ".woff2":
+            res.setHeader("Cache-Control",
+                "public, proxy-revalidate, immutable, s-maxage=604800"
+            );
+            break;
+    }
+    if (filepath.toLowerCase().includes("hls")) {
+        res.setHeader("Cache-Control",
+            "public, proxy-revalidate, immutable, s-maxage=604800"
+        );
+    }
+}
 
 /**
  * Set login credentials in cookies for quick login next time

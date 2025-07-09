@@ -2,45 +2,38 @@ const PARENT_DIR = require.main.path;
 const path = require("path");
 const fs = require("fs/promises");
 const { readFileSync } = require("fs");
+const JSON5 = require("json5");
 
 const { v4: uuid } = require("uuid");
 const Database = require("better-sqlite3");
-const { find, addRow, update } = require("./database_handler.js");
+const { find, addRow, update, deleteRow } = require("./database_handler.js");
 const playlistHandler = require("./playlist_handler.js");
 const { createFolder } = require("./general_helpers.js");
+const serverConfig = require("./server_config.js");
 
-const userRequirements = {
-    "minUsernameLen": 2,
-    "minPasswordLen": 1,
-    "allowedChars": /^[a-z0-9]+$/i
-}
-
-function initServer(app, PORT, httpsCredDir, domainName) {
+/**
+ * @param {Express} app 
+ */
+function initServer(app) {
     const USER_DB = new Database("user_data.db");
-    USER_DB.prepare(`
-        CREATE TABLE IF NOT EXISTS users (
+    USER_DB.prepare(
+        `CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY NOT NULL,
             password TEXT NOT NULL,
             folder_name TEXT NOT NULL,
             playlists_json TEXT NOT NULL
-        )
-    `).run();
+        )`
+    ).run();
 
+    const { httpsCredentials, port } = serverConfig;
+    const dir = httpsCredentials.dirName;
     const httpsCred = {
-        "key": readFileSync(
-            path.join(httpsCredDir, `${domainName}-key.pem`), { encoding: "utf8" }
-        ),
-        "cert": readFileSync(
-            path.join(httpsCredDir, `${domainName}-cert.pem`), { encoding: "utf8" }
-        )
+        "key": readFileSync(path.join(dir, httpsCredentials.keyName), { "encoding": "utf8" }),
+        "cert": readFileSync(path.join(dir, httpsCredentials.certName), { "encoding": "utf8" })
     }
-    const server = require("https").createServer(
-        httpsCred,
-        app,
-        { "cors": {"origin": "*"} }
-    );
-    server.listen(PORT, () =>
-        console.log(`Server listening on port ${PORT}`)
+    const server = require("https").createServer(httpsCred, app);
+    server.listen(port, () =>
+        console.log(`Server listening on port ${port}`)
     );
     setTerminalListeners(USER_DB);
 
@@ -126,50 +119,6 @@ function setTerminalListeners(USER_DB) {
 
 
 /**
- * @returns {userRequirements} Copy of the requirements object
- */
-function getLoginRequirements() {
-    return structuredClone(userRequirements);
-}
-
-/**
- * @param {string} key Requirement to be set
- * @param {any} value New value
- * @returns {true | false} Returns true if change is successful, false otherwise
- */
-function setLoginRequirement(key, value) {
-    if (typeof key !== "string") {
-        console.error(`ERROR: Couldn't set requirement - invalid key type (${typeof key})`);
-        return false;
-    }
-    if (key === "") {
-        console.error(`ERROR: Couldn't set requirement - blank key (${key})`);
-        return false;
-    }
-    if (userRequirements[key] === undefined) {
-        console.error(`ERROR: Couldn't set requirement - invalid option (${key})`);
-        return false;
-    }
-    if (typeof value !== typeof userRequirements[key]) {
-        console.error(`ERROR: Couldn't set requirement - mismatched option types (${typeof userRequirements[key]} to ${typeof key})`);
-        return false;
-    }
-
-    userRequirements[key] = value;
-    return true;
-}
-
-/**
- * @param {boolean} ok 
- * @param {number} status 
- * @param {string} text 
- * @returns 
- */
-function response(ok, status, text) {
-    return { ok, status, text };
-}
-
-/**
  * Check if user is within the database
  * @param {BetterSQLite3.Database} db Database
  * @param {string} table Table name
@@ -182,7 +131,6 @@ function checkLogin(db, table, username, password) {
         ["username", username],
         ["password", password],
     ]);
-
     if (users.length === 0) return false;
     if (users.length === 1) return true;
 
@@ -199,8 +147,8 @@ function checkLogin(db, table, username, password) {
  * @returns 
  */
 async function signUp(db, table, username, password) {
-    // Test username & password
-    const { minUsernameLen, minPasswordLen, allowedChars } = userRequirements;
+    const usernameRegExp = new RegExp(getCredentialRequirements().usernameRegExp);
+    const passwordRegExp = new RegExp(getCredentialRequirements().passwordRegExp);
     username = username.trim().normalize("NFKC");
     password = password.trim().normalize("NFKC");
 
@@ -218,40 +166,56 @@ async function signUp(db, table, username, password) {
         
     }
 
-    // Check for existing users of the same username
-    const users = find(db, table, [
+    const usernameOK = usernameRegExp.test(username);
+    const passwordOK = passwordRegExp.test(password);
+    if (!usernameOK &&
+        !passwordOK) return response(false, 401, "Invalid username and password");
+    if (!usernameOK) return response(false, 401, "Invalid username");
+    if (!passwordOK) return response(false, 401, "Invalid password");
+
+    const matchingUserCount = find(db, table, [
         ["username", username],
-    ]);
-    if (users.length > 0) {
-        const errorMsg = "Username already taken";
-        return response(false, 401, errorMsg);
-    }
+    ]).length;
+    if (matchingUserCount > 0) return response(false, 401, "Username already taken");
 
-    // Create a folder for user
-    let folder_name = username;
-    let success = await createFolder(path.join(PARENT_DIR, "user_playlists", username));
-
-    while (success === null) {
-        // Set folder name to a random number
-        const num = Math.random() * Math.random() * Date.now();
-        folder_name = num.toString().replaceAll(".", "").substring(0, 20);
-        success = await createFolder(path.join(PARENT_DIR, "user_playlists", folder_name));
-    }
-
+    await createUserFolder();
     addRow(db, table, [
         ["username", username],
         ["password", password],
         ["folder_name", folder_name],
-        ["playlists_json", `{"playlists":[]}`],
+        ["playlists_json", "[]"],
     ]);
     return response(true, 200, "New account created successfully");
+
+    async function createUserFolder() {
+        let folder_name = username;
+        let success = await createFolder(path.join(PARENT_DIR, "user_playlists", username));
+
+        while (success === null) {
+            // Set folder name to a random number
+            const num = Math.random() * Math.random() * Date.now();
+            folder_name = num.toString().replaceAll(".", "").substring(0, 20);
+            success = await createFolder(path.join(PARENT_DIR, "user_playlists", folder_name));
+        }
+    }
+}
+
+function getCredentialRequirements() {
+    return serverConfig.accounts.credentialRequirements;
+}
+
+/**
+ * @param {boolean} ok 
+ * @param {number} status 
+ * @param {string} text 
+ * @returns 
+ */
+function response(ok, status, text) {
+    return { ok, status, text };
 }
 
 module.exports = {
     initServer,
-
-    getLoginRequirements,
-    setLoginRequirement,
     checkLogin,
     signUp,
 }
