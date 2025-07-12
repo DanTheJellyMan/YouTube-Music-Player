@@ -43,6 +43,7 @@ const generalHelpers = require(path.join(modulesPath, "general_helpers.js"));
  */
 const serverConfig = require(path.join(modulesPath, "server_config.js"));
 
+const compression = require("compression");
 const cookieParser = require("cookie-parser");
 const express = require("express");
 const cors = require("cors");
@@ -58,6 +59,7 @@ app.use(cors({
         return callback(`Blocked by CORS [${origin}]`);
     }
 }));
+app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 app.use(userAuthMiddleware);

@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "better-sqlite3": "^11.9.1",
+    "compression": "^1.8.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "decimal.js": "^10.5.0",
