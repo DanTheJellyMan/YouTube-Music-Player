@@ -83,8 +83,8 @@ app.post("/login", (req, res) => {
 });
 
 app.post("/signup", async (req, res) => {
-    const username = decodeURIComponent(req.body.username);
-    const password = decodeURIComponent(req.body.password);
+    const username = req.body.username;
+    const password = req.body.password;
     const { ok, status, text } = await serverHelper.signUp(USER_DB, "users", username, password);
     if (ok) loginCookies(res, username, password);
     res.status(status).send(text);
@@ -119,22 +119,6 @@ app.post("/upload-playlist", async (req, res) => {
     } catch (err) {
         console.error(err);
         if (!res.headersSent) res.status(401).end();
-    }
-});
-
-// REMOVE ONCE PLAYLIST STORAGE DESIGN IS FINISHED
-app.post("/make-playlist", async (req, res) => {
-    const userFolder = dbHandler.find(USER_DB, "users", [
-        ["username", req.cookies.username]
-    ])[0]["folder_name"];
-    const { playerName, playlistName, songNames } = req.body;
-    
-    try {
-        await playlistHandler.makePlaylist(playerName, userFolder, playlistName, songNames);
-        return res.status(200).end();
-    } catch (err) {
-        console.error(err);
-        return res.status(401).end();
     }
 });
 

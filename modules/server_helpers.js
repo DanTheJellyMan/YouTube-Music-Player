@@ -152,20 +152,6 @@ async function signUp(db, table, username, password) {
     username = username.trim().normalize("NFKC");
     password = password.trim().normalize("NFKC");
 
-    if (username.length < minUsernameLen) {
-        const errorMsg = "Invalid username. Must be at least 2 characters long";
-        return response(false, 401, errorMsg);
-
-    } else if (!allowedChars.test(username)) {
-        const errorMsg = "Invalid username. May only contain alphabetical characters and/or numbers";
-        return response(false, 401, errorMsg);
-        
-    } else if (password.length < minPasswordLen) {
-        const errorMsg = "Invalid password. Must be at least 1 characters long";
-        return response(false, 401, errorMsg);
-        
-    }
-
     const usernameOK = usernameRegExp.test(username);
     const passwordOK = passwordRegExp.test(password);
     if (!usernameOK &&
@@ -178,7 +164,7 @@ async function signUp(db, table, username, password) {
     ]).length;
     if (matchingUserCount > 0) return response(false, 401, "Username already taken");
 
-    await createUserFolder();
+    const folder_name = await createUserFolder();
     addRow(db, table, [
         ["username", username],
         ["password", password],
@@ -192,11 +178,10 @@ async function signUp(db, table, username, password) {
         let success = await createFolder(path.join(PARENT_DIR, "user_playlists", username));
 
         while (success === null) {
-            // Set folder name to a random number
-            const num = Math.random() * Math.random() * Date.now();
-            folder_name = num.toString().replaceAll(".", "").substring(0, 20);
+            folder_name = uuid();
             success = await createFolder(path.join(PARENT_DIR, "user_playlists", folder_name));
         }
+        return folder_name;
     }
 }
 

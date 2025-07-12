@@ -1,10 +1,12 @@
 /**
  * @typedef {object} ServerConfig
+ * @property {ServerConfig} default Cloned, immutable version of the config
  * @property {string} youtubeAPIKey
  * @property {HTTPSCredentials} httpsCredentials
  * @property {number} port
  * @property {string[]} corsWhitelist
  * @property {ServerConfigAccounts} accounts
+ * @property {string[]} ffmpegOptions Only contains audio filters
  */
 
 /**
@@ -31,6 +33,11 @@ const json = readFileSync(configPath, { "encoding": "utf8" });
  * @type {ServerConfig}
  */
 const config = JSON5.parse(json);
-console.log(`SERVER CONFIG:\n${JSON.stringify(config, null, 4)}`);
+config.default = structuredClone(config);
+Object.freeze(config.default);
+
+const printableConfig = structuredClone(config);
+printableConfig.default = "{cloned config settings...}";
+console.log(`SERVER CONFIG:\n${JSON.stringify(printableConfig, null, 4)}`);
 
 module.exports = config;
