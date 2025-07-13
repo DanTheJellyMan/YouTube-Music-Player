@@ -92,12 +92,48 @@ app.post("/signup", async (req, res) => {
     res.status(status).send(text);
 });
 
-app.get("/get-playlists", async (req, res) => {
+app.get("/get-playlists", (req, res) => {
     const { username } = req.cookies;
     const user = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0];
     res.status(200).json(JSON.parse(user["playlists_json"]));
+});
+
+app.get("/get-playlist-timestamps", (req, res) => {
+    const { username } = req.cookies;
+    const userFolder = dbHandler.find(USER_DB, "users", [
+        ["username", username]
+    ])[0]["folder_name"];
+    const playlistName = decodeURIComponent(req.query.name);
+    const playlistTimestampsPath = path.join(
+        PARENT_DIR, "user_playlists", userFolder, playlistName, "playlistTimestamps.json"
+    );
+    res.sendFile(playlistTimestampsPath);
+});
+
+// For obtaining a playlist .m3u8
+app.get("/play/:playlist/", (req, res) => {
+    const { username } = req.cookies;
+    const userFolder = dbHandler.find(USER_DB, "users", [
+        ["username", username]
+    ])[0]["folder_name"];
+    const playlistName = decodeURIComponent(req.params.playlist).trim();
+    const playlistPath = path.join(
+        PARENT_DIR, "user_playlists", userFolder, playlistName, "playlist.m3u8"
+    );
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.sendFile(playlistPath);
+});
+
+// For obtaning a playlist .m3u8's chunks (.ts)
+app.get("/play/:playlist/:song/:chunk", (req, res) => {
+    const userFolder = dbHandler.find(USER_DB, "users", [
+        ["username", req.cookies.username]
+    ])[0]["folder_name"];
+    const { playlist: playlistName, song, chunk } = req.params;
+    const chunkPath = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName, song, chunk);
+    res.sendFile(chunkPath);
 });
 
 app.post("/upload-playlist", async (req, res) => {
@@ -122,30 +158,6 @@ app.post("/upload-playlist", async (req, res) => {
         console.error(err);
         if (!res.headersSent) res.status(401).end();
     }
-});
-
-// For obtaining a playlist .m3u8
-app.get("/play", (req, res) => {
-    const { username } = req.cookies;
-    const userFolder = dbHandler.find(USER_DB, "users", [
-        ["username", username]
-    ])[0]["folder_name"];
-    const playlistName = decodeURIComponent(req.query.playlist).trim();
-    const playlistPath = path.join(
-        PARENT_DIR, "user_playlists", userFolder, playlistName, "playlist.m3u8"
-    );
-    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.sendFile(playlistPath);
-});
-
-// For obtaning a playlist .m3u8's chunks (.ts)
-app.get("/play/:playlist/:song/:chunk", (req, res) => {
-    const userFolder = dbHandler.find(USER_DB, "users", [
-        ["username", req.cookies.username]
-    ])[0]["folder_name"];
-    const { playlist: playlistName, song, chunk } = req.params;
-    const chunkPath = path.join(PARENT_DIR, "user_playlists", userFolder, playlistName, song, chunk);
-    res.sendFile(chunkPath);
 });
 
 // Simple route to allow client to measure latency, to determine

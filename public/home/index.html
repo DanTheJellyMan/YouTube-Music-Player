@@ -4,13 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Music Player</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
     <link rel="icon" type="image/png" sizes="16x16" href="../favicon.png">
     <link rel="stylesheet" href="./home.css">
-    <link rel="stylesheet" href="./player.css">
+
     <script src="./hls.light.min.js"></script>
-    <script defer src="./home.js"></script>
-    <script defer src="./player.js"></script>
-    <script defer src="./player_component.js"></script>
+    <script type="module" src="./home.js"></script>
 </head>
 <body>
     <div id="toggle-menu">
@@ -24,21 +26,20 @@
         <div id="playlist-list-header">
             <h3>Add new playlist:</h3>
 
-            <abbr id="add-new-playlist" title="Upload playlist" onclick="toggleForm()">
+            <abbr id="add-new-playlist" title="Upload playlist">
                 <div id="open-playlist-form" class="cross">
                     <div></div>
                     <div></div>
                 </div>
             </abbr>
 
-            <button id="reload-list" onclick="fetchPlaylists()">Reload</button>
+            <button id="reload-list">Reload</button>
         </div>
 
-        <div id="playlist-list">
-        </div>
+        <div id="playlist-list"></div>
 
         <div id="playlist-upload-form">
-            <abbr title="Close" class="cross" onclick="toggleForm()">
+            <abbr title="Close" class="cross">
                 <div></div>
                 <div></div>
             </abbr>
@@ -52,5 +53,86 @@
             <button onclick="uploadPlaylist()">Upload</button>
         </div>
     </main>
+
+    <template id="music-player-template">
+        <div id="container">
+            <header>
+                <div id="open-settings">
+                    <div></div>
+                    <div></div>
+                    <div></div>
+                </div>
+                <div id="move-handle" draggable="true"></div>
+                <div id="close"></div>
+            </header>
+
+            <div id="settings">
+                <div>
+                    <button>Shuffle playlist</button>
+                </div>
+            </div>
+
+            <div id="body">
+                <main>
+                    <div id="title">
+                        <a target="_blank" href="">Song_Title</a>
+                    </div>
+
+                    <div id="thumbnail">
+                        <img alt="Song thumbnail" loading="lazy" draggable="false">
+                    </div>
+                    
+                    <div id="author">
+                        <a target="_blank" href="">Song_Author</a>
+                    </div>
+
+                    <div id="timeline">
+                        <div>
+                            <p class="time-label start">0:00</p>
+                            <input id="progress" type="range" step="0.01" max="1" value="0">
+                            <p class="time-label end">0:00</p>
+                        </div>
+                    </div>
+
+                    <div id="controls">
+                        <div class="track previous">
+                            <div>
+                                <div></div>
+                                <div></div>
+                                <div></div>
+                            </div>
+                        </div>
+
+                        <div id="play-button">
+                            <div>
+                                <div></div>
+                                <div></div>
+                            </div>
+                        </div>
+                        
+                        <div class="track next">
+                            <div>
+                                <div></div>
+                                <div></div>
+                                <div></div>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+
+                <footer>
+                    <div id="open-queue">
+                        <div></div>
+                    </div>
+
+                    <div id="queue"></div>
+                </footer>
+            </div>
+        </div>
+    </template>
+
+    <template id="playlist-template">
+
+    </template>
 </body>
 </html>

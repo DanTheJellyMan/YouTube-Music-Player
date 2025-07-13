@@ -289,7 +289,7 @@ async function addPlaylistTimestamp(playlistTimestampsPath, songM3U8Path, index 
         await fs.readFile(playlistTimestampsPath, { "encoding": "utf8" })
     );
     const timestampInfo = {
-        "filename": path.basename(songM3U8Path),
+        "filename": path.basename(songM3U8Path, ".m3u8"),
         "startTime": "-1",
         "length": await getSongLength(songM3U8Path)
     }
@@ -464,8 +464,7 @@ async function makePlaylistFile(playlistPath) {
 
     for (const item of playlistTimestamps) {
         const { filename } = item;
-        const trimmedFilename = path.basename(filename, ".m3u8");
-        const m3u8Path = path.join(playlistPath, trimmedFilename, filename);
+        const m3u8Path = path.join(playlistPath, filename, `${filename}.m3u8`);
         const m3u8FileContent = await fs.readFile(m3u8Path, { "encoding": "utf8" });
         if (playlist_m3u8 === "") {
             const segmentTime = getM3U8TargetDuration(m3u8FileContent);
@@ -474,7 +473,7 @@ async function makePlaylistFile(playlistPath) {
                 `#EXT-X-TARGETDURATION:${segmentTime}\n#EXT-X-MEDIA-SEQUENCE:0\n`;
         }
 
-        let adjustedM3U8 = adjustSongPaths(trimmedFilename, m3u8FileContent);
+        let adjustedM3U8 = adjustSongPaths(filename, m3u8FileContent);
         const startIndex = adjustedM3U8.indexOf("#EXTINF");
         const endIndex = adjustedM3U8.indexOf("#EXT-X-ENDLIST") - 1;
         adjustedM3U8 = adjustedM3U8.substring(startIndex, endIndex);

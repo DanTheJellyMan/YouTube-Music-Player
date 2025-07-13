@@ -38,6 +38,6 @@ Object.freeze(config.default);
 
 const printableConfig = structuredClone(config);
 printableConfig.default = "{cloned config settings...}";
-console.log(`SERVER CONFIG:\n${JSON.stringify(printableConfig, null, 4)}`);
+// console.log(`SERVER CONFIG:\n${JSON.stringify(printableConfig, null, 4)}`);
 
 module.exports = config;

@@ -1,40 +1,37 @@
-// 
-const playlists = {
-    "promise": Promise.resolve(),
-    "enqueued": false,
-    "list": null,
-}
+import MusicPlayer from "./PlayerModule.js";
+globalThis["MusicPlayer"] = MusicPlayer;
+
+const FETCH_INTERVAL_SECONDS = 30;
+let gettingPlaylists = false;
 fetchPlaylists();
-setInterval(fetchPlaylists, 1000 * 30);
+setInterval(fetchPlaylists, 1000 * FETCH_INTERVAL_SECONDS);
 
 const playlistListHeader = document.querySelector("#playlist-list-header");
 const playlistList = document.querySelector("#playlist-list");
-document.querySelector("#toggle-menu").onclick = e => {
-    const main = document.querySelector("main");
-    if (getComputedStyle(main).getPropertyValue("display") === "none") {
-        main.style.display = "flex";
-    } else {
-        main.style.display = "none";
-    }
-}
+
+document.querySelector("#toggle-menu").onclick = toggleMenu;
+document.querySelector("#add-new-playlist").onclick = toggleForm;
+document.querySelector("#playlist-upload-form > abbr.cross").onclick = toggleForm;
+document.querySelector("#reload-list").onclick = fetchPlaylists;
+document.querySelector("#playlist-upload-form > button").onclick = uploadPlaylist;
 
 async function uploadPlaylist() {
     const inputEl = document.querySelector("#playlist-input");
     let url = inputEl.value.trim()
-              .replace("https://", "")
-              .replace("www.", "");
+        .replace("https://", "")
+        .replace("www.", "")
+        .trim();
     if (!url.startsWith("youtube.com/playlist?list=")) {
         inputEl.value = "";
         alert("Please upload a valid YouTube URL starting with 'youtube.com/playlist?list='");
         return;
     }
     
-    const res = await fetch("/upload-playlist", {
+    const res = await fetch(`/upload-playlist?url=${encodeURIComponent(url)}`, {
         "method": "POST",
         "headers": {
             "Content-Type": "application/json"
-        },
-        "body": JSON.stringify({ url })
+        }
     });
 
     if (!res.ok) {
@@ -49,54 +46,52 @@ async function uploadPlaylist() {
 }
 
 async function fetchPlaylists() {
-    if (playlists.enqueued) return;
+    if (gettingPlaylists) return;
     const controller = new AbortController();
-    playlists.enqueued = true;
+    gettingPlaylists = true;
     toggleFetching(1);
 
-    let res;
     const timeout = setTimeout(() => {
         controller.abort("Playlist fetch timeout");
     }, 1000 * 10);
-    playlists.promise = fetch("/get-playlists", {
-        "method": "GET",
-        "headers": {
-            "Content-Type": "application/json"
-        },
-        "signal": controller.signal
-    });
+    let res;
     try {
-        res = await playlists.promise;
+        res = await fetch("/get-playlists", {
+            "method": "GET",
+            "headers": { "Content-Type": "application/json" },
+            "signal": controller.signal
+        });
     } catch (err) {
         clearTimeout(timeout);
-        playlists.enqueued = false;
-        toggleFetching(0);
+        endFetchingMode();
         console.error(err);
         return;
     }
     clearTimeout(timeout);
-    if (!res.ok) {
+    if (res && !res.ok) {
         console.error("Playlist fetch failed\n" + res);
-        playlists.enqueued = false;
-        toggleFetching(0);
+        endFetchingMode();
         return;
     }
 
-    const playlistsInfo = await res.json();
-    playlists.list = playlistsInfo["playlists"];
-    if (playlistList.children) {
+    if (playlistList.children instanceof HTMLCollection) {
         for (const el of playlistList.children) el.remove();
     }
-    for (const playlist of playlists.list) {
+
+    const playlists = await res.json();
+    for (const playlist of playlists) {
         createPlaylistEl(playlist);
     }
 
-    toggleFetching(0);
-    playlists.enqueued = false;
+    endFetchingMode();
+    function endFetchingMode() {
+        gettingPlaylists = false;
+        toggleFetching(0);
+    }
 }
 
 function createPlaylistEl(playlist) {
-    const { done, name, progress, songs } = playlist;
+    const { done, name, progress } = playlist;
 
     const element = document.createElement("div");
     element.className = "playlist";
@@ -106,7 +101,9 @@ function createPlaylistEl(playlist) {
     const playlistName = document.createElement("p");
     playlistName.className = "name";
     playlistName.textContent = name;
-    playlistName.onclick = initPlayer;
+    playlistName.onclick = e => {
+        initPlayer(playlist);
+    }
     element.appendChild(playlistName);
 
     const progressEl = document.createElement("p");
@@ -115,10 +112,22 @@ function createPlaylistEl(playlist) {
     element.appendChild(progressEl);
 
     playlistList.appendChild(element);
+}
 
-    function initPlayer() {
-        const player = new MusicPlayer(playlist);
-        document.body.appendChild(player);
+async function initPlayer(playlist = null) {
+    const player = new MusicPlayer();
+    player.setPlaylist(playlist);
+    await player.setPlaylistTimestamps();
+    player.initPlayer();
+    document.body.appendChild(player);
+}
+
+function toggleMenu(e) {
+    const main = document.querySelector("main");
+    if (getComputedStyle(main).getPropertyValue("display") === "none") {
+        main.style.display = "flex";
+    } else {
+        main.style.display = "none";
     }
 }
 
@@ -149,7 +158,7 @@ function toggleForm(forceState = -1) {
 
 /**
  * Switch UI for playlist fetching
- * @param {number} state 1 = enable / 0 = disable
+ * @param {number} state 1 = fetching / 0 = not fetching
  */
 function toggleFetching(state = 1) {
     if (!document) return;
