@@ -137,24 +137,13 @@ export default class MusicPlayer extends HTMLElement {
         this.#hostObserver.observe(host);
 
         host.addEventListener("keydown", e => {
-            this.#heldKeysSet.add(e.key);
-
-            clearTimeout(this.#checkKeysTimeout);
-            this.#checkKeysTimeout = setTimeout(() => {
-                this.#performHotkeyAction();
-                this.#keyWasRaised = false;
-
-                this.#repeatKeyPressInterval = setInterval(() => {
-                    this.#performHotkeyAction();
-                }, 100);
-            }, this.#checkKeysDelayMS);
+            e.preventDefault();
+            this.#handleKeyDown(e.key);
         }, { signal });
+
         document.addEventListener("keyup", e => {
-            if (this.#keyWasRaised) this.#performHotkeyAction();
-            this.#heldKeysSet.delete(e.key);
-            clearTimeout(this.#checkKeysTimeout);
-            clearInterval(this.#repeatKeyPressInterval);
-            this.#keyWasRaised = true;
+            e.preventDefault();
+            this.#handleKeyUp(e.key);
         }, { signal });
 
         const close = container.querySelector("#close");
@@ -174,7 +163,16 @@ export default class MusicPlayer extends HTMLElement {
         const controls = main.querySelector("#controls");
         const playBtn = controls.querySelector("#play-button");
         playBtn.firstElementChild.addEventListener("click", () => {
-            this.toggle()
+            this.toggle();
+        }, { signal });
+        
+        const prevTrack = controls.querySelector(".track.previous");
+        prevTrack.addEventListener("click", () => {
+            this.seekPreviousTrack();
+        }, { signal });
+        const nextTrack = controls.querySelector(".track.next");
+        nextTrack.addEventListener("click", () => {
+            this.seekNextTrack();
         }, { signal });
 
         const footer = body.querySelector("footer");
@@ -245,14 +243,33 @@ export default class MusicPlayer extends HTMLElement {
         return this.pause();
     }
 
-    seek() {
-        
+    seek(seconds) {
+        const timestamp = this.#playlistTimestamps[this.#playlistTimestampsIndex];
+        const startTime = parseFloat(timestamp.startTime);
+        const currentTime = this.currentTime(true);
+
+        const minTime = startTime;
+        const maxTime = startTime + parseFloat(timestamp.length) - 1;
+        const newTime = Math.min( Math.max(minTime, currentTime+seconds), maxTime );
+        this.#audio.currentTime = newTime;
     }
     seekNextTrack() {
-
+        const timestamp = this.#playlistTimestamps[this.#playlistTimestampsIndex];
+        const endTime = parseFloat(timestamp.startTime) + parseFloat(timestamp.length);
+        this.#audio.currentTime = endTime;
     }
     seekPreviousTrack() {
+        const index = Math.max(0, this.#playlistTimestampsIndex - 1);
+        const startTime = parseFloat(
+            this.#playlistTimestamps[index].startTime
+        );
+        this.#audio.currentTime = startTime;
+    }
 
+    #handleProgressSeek(e) {
+        e.preventDefault();
+        const progress = e.target;
+        
     }
 
     /*
@@ -271,10 +288,34 @@ export default class MusicPlayer extends HTMLElement {
         return this.#audio.currentTime - startTime;
     }
     getVolume() {
-
+        return this.#audio.volume;
     }
-    setVolume() {
+    setVolume(level) {
+        if (typeof level !== "number" || Number.isNaN(level) || isNaN(level)) {
+            return console.error(`'${level}' IS NOT A VALID VOLUME LEVEL`);
+        }
+        this.#audio.volume = Math.min(Math.max(0, level), 1);
+    }
 
+    #handleKeyDown(key) {
+        this.#heldKeysSet.add(key);
+
+        clearTimeout(this.#checkKeysTimeout);
+        this.#checkKeysTimeout = setTimeout(() => {
+            this.#performHotkeyAction();
+            this.#keyWasRaised = false;
+
+            this.#repeatKeyPressInterval = setInterval(() => {
+                this.#performHotkeyAction();
+            }, 100);
+        }, this.#checkKeysDelayMS);
+    }
+    #handleKeyUp(key) {
+        if (this.#keyWasRaised) this.#performHotkeyAction();
+        this.#heldKeysSet.delete(key);
+        clearTimeout(this.#checkKeysTimeout);
+        clearInterval(this.#repeatKeyPressInterval);
+        this.#keyWasRaised = true;
     }
 
     /*
@@ -320,16 +361,17 @@ export default class MusicPlayer extends HTMLElement {
             return alert(msg);
         }
 
-        const timestamps = await res.json();
-        this.#playlistTimestamps = timestamps.sort((a, b) => a.startTime - b.startTime);
+        this.#playlistTimestamps = await res.json();
 
-        const sortedPlaylistSongs = [];
+        // Aligns this.#playlist.songs with this.#playlistTimestamps
+        // Move into function later, does not need to be run here
+        const sortedPlaylistSongs = Array(this.#playlistTimestamps.length);
         let i = 0;
-        while (sortedPlaylistSongs.length < this.#playlistTimestamps.length) {
+        while (i < this.#playlistTimestamps.length) {
             const song = this.#playlist.songs.find(song => {
                 return song.filename === this.#playlistTimestamps[i].filename;
             });
-            sortedPlaylistSongs.push(song);
+            sortedPlaylistSongs[i] = song;
             i++;
         }
         this.#playlist.songs = sortedPlaylistSongs;
@@ -410,9 +452,9 @@ export default class MusicPlayer extends HTMLElement {
         }
 
         if (held["left"]) {
-            this.#audio.currentTime -= 5;
+            this.seek(-5);
         } else if (held["right"]) {
-            this.#audio.currentTime += 5;
+            this.seek(+5);
         } else if (held["space"]) {
             this.toggle();
         } else if (held["down"]) {
@@ -437,12 +479,16 @@ export default class MusicPlayer extends HTMLElement {
         const timestamps = this.#playlistTimestamps;
 
         const CURRENT_RELATIVE_TIME = this.currentTime(false);
+        const CURRENT_ABSOLUTE_TIME = this.currentTime(true);
         const songLength = parseFloat(
             timestamps[this.#playlistTimestampsIndex].length
         );
-        if (CURRENT_RELATIVE_TIME >= songLength) {
+        const songStartTime = parseFloat(
+            timestamps[this.#playlistTimestampsIndex].startTime
+        );
+        if (CURRENT_RELATIVE_TIME >= songLength || CURRENT_ABSOLUTE_TIME < songStartTime) {
             // NOTE: it may be wise to put a "return" here for a performance boost
-            this.#playlistTimestampsIndex++;
+            this.#playlistTimestampsIndex = this.#findCurrentTimestampIndex();
         }
 
         const timestamp = timestamps[this.#playlistTimestampsIndex];
@@ -475,6 +521,20 @@ export default class MusicPlayer extends HTMLElement {
         progress.max = length;
         const endTimeLabel = shadow.querySelector(".time-label.end");
         endTimeLabel.textContent = MusicPlayer.formatSeconds(length);
+    }
+    
+    #findCurrentTimestampIndex() {
+        const currentAbsoluteTime = this.currentTime(true);
+        for (let i=0; i<this.#playlistTimestamps.length; i++) {
+            const timestamp = this.#playlistTimestamps[i];
+            const startTime = parseFloat(timestamp.startTime);
+            const length = parseFloat(timestamp.length);
+            if (currentAbsoluteTime >= startTime &&
+                currentAbsoluteTime < startTime+length) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     #detectLandscape() {
