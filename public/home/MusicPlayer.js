@@ -1,43 +1,8 @@
-export class Pinger {
-    #ping = 100; // Measured in ms
-    #intervalTime; // In seconds
-    #controller = new AbortController();
-    #timeout = setTimeout(() => {}, 0);
-    
-    /**
-     * @param {number} interval Time in seconds to do a ping
-     */
-    constructor(interval = 60) {
-        this.#intervalTime = interval;
-        this.#pingServer();
-
-        setInterval(() => {
-            this.#pingServer();
-        }, 1000 * this.#intervalTime + 2);
-    }
-
-    #pingServer() {
-        this.#timeout = setTimeout(() => {
-            this.#controller.abort(`PINGER TIMEOUT AFTER ${this.#intervalTime} SECONDS`);
-        }, 1000 * this.#intervalTime + 1);
-
-        const start = performance.now();
-        fetch("/ping", { "signal": this.#controller.signal })
-        .then(() => {
-            clearTimeout(this.#timeout);
-            this.#ping = performance.now() - start;
-        })
-        .catch(err => console.error(err));
-    }
-
-    get() {
-        return this.#ping;
-    }
-}
+import Pinger from "./Pinger.js";
 
 export default class MusicPlayer extends HTMLElement {
     static #pinger = new Pinger(90);
-    static #stylesheet = fetch(`${window.location}music-player.css`)
+    static #stylesheet = fetch(`./MusicPlayer.css`)
         .then(res => res.text())
         .then(text => new CSSStyleSheet().replace(text));
     static observedAttributes = ["paused"];
@@ -47,10 +12,17 @@ export default class MusicPlayer extends HTMLElement {
 
     #hls = new Hls();
     #audio = new Audio();
+    #volume = 0.5;
 
+    /**
+     * @type {Object[] | null}
+     */
     #playlist = null;
     #playlistSongIndex = 0;
 
+    /**
+     * @type {Object[] | null}
+     */
     #playlistTimestamps = null;
     #playlistTimestampsIndex = 0;
 
@@ -112,13 +84,16 @@ export default class MusicPlayer extends HTMLElement {
         const template = document.querySelector("#music-player-template");
         shadow.appendChild(template.content.cloneNode(true));
 
-        // Precaution incase any attributes were set on
-        // the host before attachment to DOM
+        // Precaution in case attribs were set on host before DOM attachment
         this.#equalizeHostAndContainerAttribs();
+        this.#initListeners();
+        this.#initAttribs();
+    }
 
-        // Set event listeners
+    #initListeners() {
         const { signal } = this.#controller;
-        const { host } = shadow;
+        const host = this;
+        const shadow = host.shadowRoot;
         const container = shadow.querySelector("#container");
         const header = container.querySelector("header");
 
@@ -128,11 +103,10 @@ export default class MusicPlayer extends HTMLElement {
             settings.toggleAttribute("open");
         }, { signal });
 
-        // Ensures that the element's fully parsed before any resizing
-        // to avoid issues of uninitialized CSS properties being used
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => handleResizeObserver());
-        });
+        // Ensure element is fully parsed before any resizing
+        // Avoids issues of un-initialized CSS properties being used
+        waitForStyleInit();
+
         this.#hostObserver = new ResizeObserver(handleResizeObserver);
         this.#hostObserver.observe(host);
 
@@ -147,10 +121,9 @@ export default class MusicPlayer extends HTMLElement {
         }, { signal });
 
         const close = container.querySelector("#close");
-        close.addEventListener("click",
-            this.#handleClose,
-            { signal }
-        );
+        close.addEventListener("click", () => {
+            this.remove();
+        }, { signal });
 
         const body = container.querySelector("#body");
         body.addEventListener("wheel", e => {
@@ -159,7 +132,6 @@ export default class MusicPlayer extends HTMLElement {
         }, { signal });
 
         const main = body.querySelector("main");
-
         const controls = main.querySelector("#controls");
         const playBtn = controls.querySelector("#play-button");
         playBtn.firstElementChild.addEventListener("click", () => {
@@ -178,20 +150,14 @@ export default class MusicPlayer extends HTMLElement {
         const footer = body.querySelector("footer");
         const open = footer.querySelector("#open-queue");
         open.addEventListener("click", this.#handleQueueOpen, { signal });
+        this.updateQueueOrder();
 
+        this.#audio.addEventListener("canplay", e => {
+            this.#audio.volume = this.#volume;
+        }, { signal });
         this.#audio.addEventListener("timeupdate", e => {
             host.handleTimeupdate();
         }, { signal });
-
-        // Set attributes
-        this.#detectLandscape();
-        this.setAttrib("playing", "false");
-
-        if (getComputedStyle(footer).getPropertyValue("translate") === "none") {
-            footer.setAttribute("open", "false");
-        } else {
-            footer.setAttribute("open", "true");
-        }
 
         function handleResizeObserver(entries = [], observer = null) {
             host.#detectLandscape();
@@ -205,12 +171,44 @@ export default class MusicPlayer extends HTMLElement {
             const { width, height } = container.getBoundingClientRect();
             host.#resizeQueue(width, height);
         }
+
+        function waitForStyleInit(PAGE_RENDERS_BEFORE_OK = 10) {
+            let callback = handleResizeObserver;
+            for (let renders = 0; renders < PAGE_RENDERS_BEFORE_OK; renders++) {
+                callback = () => requestAnimationFrame(callback);
+            }
+            callback();
+        }
+    }
+
+    #initAttribs() {
+        const host = this;
+        const shadow = host.shadowRoot;
+        const container = shadow.querySelector("#container");
+        const footer = container.querySelector("footer");
+
+        this.#detectLandscape();
+        this.setAttrib("playing", "false");
+
+        if (getComputedStyle(footer).getPropertyValue("translate") === "none") {
+            footer.setAttribute("open", "false");
+        } else {
+            footer.setAttribute("open", "true");
+        }
     }
 
     // Cleanup after removal from DOM
     disconnectedCallback() {
+        this.#hls.destroy();
+        this.#audio.pause();
+        this.#audio.src = "";
+        this.#audio.load();
+        this.#audio.remove();
+        this.#audio = null;
+
         this.#controller.abort();
         this.#hostObserver.disconnect();
+        console.log("music player deleted");
     }
 
     // Handle changes to element attributes (NOT PROPERTIES! e.g., this.playing)
@@ -288,13 +286,14 @@ export default class MusicPlayer extends HTMLElement {
         return this.#audio.currentTime - startTime;
     }
     getVolume() {
-        return this.#audio.volume;
+        return this.#volume;
     }
     setVolume(level) {
         if (typeof level !== "number" || Number.isNaN(level) || isNaN(level)) {
             return console.error(`'${level}' IS NOT A VALID VOLUME LEVEL`);
         }
-        this.#audio.volume = Math.min(Math.max(0, level), 1);
+        this.#volume = Math.min( Math.max(0, level), 1 );
+        this.#audio.volume = this.#volume;
     }
 
     #handleKeyDown(key) {
@@ -362,21 +361,21 @@ export default class MusicPlayer extends HTMLElement {
         }
 
         this.#playlistTimestamps = await res.json();
+    }
 
-        // Aligns this.#playlist.songs with this.#playlistTimestamps
-        // Move into function later, does not need to be run here
+    #alignPlaylistToTimestampsOrder() {
         const sortedPlaylistSongs = Array(this.#playlistTimestamps.length);
-        let i = 0;
-        while (i < this.#playlistTimestamps.length) {
+        for (let i=0; i < this.#playlistTimestamps.length; i++) {
             const song = this.#playlist.songs.find(song => {
                 return song.filename === this.#playlistTimestamps[i].filename;
             });
+            if (!song) throw Error(
+                `NO MATCHING PLAYLIST ITEM FOR TIMESTAMP:\n`+
+                `${this.#playlistTimestamps[i]}`
+            );
             sortedPlaylistSongs[i] = song;
-            i++;
         }
         this.#playlist.songs = sortedPlaylistSongs;
-
-        console.log(this.#playlistTimestamps, this.#playlist)
     }
     
     initPlayer() {
@@ -411,6 +410,8 @@ export default class MusicPlayer extends HTMLElement {
             this.#hls.loadSource(`/play/${encodedPlayistName}/`);
             this.#hls.attachMedia(this.#audio);
         }
+
+        this.shufflePlaylist(100);
     }
 
     // Optional
@@ -438,7 +439,7 @@ export default class MusicPlayer extends HTMLElement {
             this.#playlist.songs = tempSongs;
         }
 
-        // TODO: make player method to update queue order
+        this.updateQueueOrder();
     }
 
     #performHotkeyAction() {
@@ -458,9 +459,9 @@ export default class MusicPlayer extends HTMLElement {
         } else if (held["space"]) {
             this.toggle();
         } else if (held["down"]) {
-            this.#audio.volume = Math.max(0, this.#audio.volume - 0.05);
+            this.setVolume(this.getVolume() - 0.05);
         } else if (held["up"]) {
-            this.#audio.volume = Math.min(this.#audio.volume + 0.05, 1);
+            this.setVolume(this.getVolume() + 0.05);
         }
     }
 
@@ -499,7 +500,6 @@ export default class MusicPlayer extends HTMLElement {
 
         const host = this;
         const shadow = host.shadowRoot;
-
         const progress = shadow.querySelector("#progress");
         const startTimeLabel = shadow.querySelector(".time-label.start");
         startTimeLabel.textContent = MusicPlayer.formatSeconds(CURRENT_RELATIVE_TIME);
@@ -512,7 +512,16 @@ export default class MusicPlayer extends HTMLElement {
 
         const thumbnail_img = shadow.querySelector("#thumbnail > img");
         thumbnail_img.src = "";
-        thumbnail_img.src = thumbnails.high;
+        let thumbnailSrc = "";
+        const ping = MusicPlayer.getPing();
+        if (ping < 75) {
+            thumbnailSrc = thumbnails.high;
+        } else if (ping < 200) {
+            thumbnailSrc = thumbnails.medium;
+        } else {
+            thumbnailSrc = thumbnails.low;
+        }
+        thumbnail_img.src = thumbnailSrc;
 
         const authorAnchor = shadow.querySelector("#author > a");
         authorAnchor.textContent = channelName;
@@ -535,6 +544,25 @@ export default class MusicPlayer extends HTMLElement {
             }
         }
         return -1;
+    }
+
+    updateQueueOrder() {
+        const queue = this.shadowRoot.querySelector("#queue");
+        if (!queue) return;
+        for (const child of queue.children) this.#removeQueueItem(child);
+
+        const { songs } = this.#playlist;
+        for (let i=0; i<songs.length; i++) {
+            const timestamp = this.#playlistTimestamps[i];
+            const item = createQueueItem(songs[i], timestamp, () => {
+                console.log(timestamp.filename === songs[i].filename)
+                this.#audio.currentTime = parseFloat(timestamp.startTime);
+            }, this.#controller.signal);
+            queue.appendChild(item);
+        }
+    }
+    #removeQueueItem(item) {
+        item.remove();
     }
 
     #detectLandscape() {
@@ -670,11 +698,6 @@ export default class MusicPlayer extends HTMLElement {
         return transitionProp;
     }
 
-    #handleClose(e) {
-        const { host } = this.parentNode.parentNode.parentNode;
-        host.remove();
-    }
-
     /**
      * Set the attributes of container equal to the host element's
      * @returns {void}
@@ -752,9 +775,37 @@ export default class MusicPlayer extends HTMLElement {
     static getPing() {
         return MusicPlayer.#pinger.get();
     }
-    static randomInt(min, max) {
-        return Math.floor(Math.random() * (max - min + 1) + min);
+    static pingServer() {
+        MusicPlayer.#pinger.pingServer();
     }
 }
-
 customElements.define("music-player", MusicPlayer);
+
+function createQueueItem(song, timestamp, clickCallback, abortSignal) {
+    const item = document.createElement("div");
+    const miniThumbnail = document.createElement("img");
+    miniThumbnail.src = song.thumbnails.low;
+    item.appendChild(miniThumbnail);
+
+    const songInfo = document.createElement("div");
+    songInfo.addEventListener("click", clickCallback, { "signal": abortSignal });
+    item.appendChild(songInfo);
+    
+    const title = document.createElement("p");
+    title.textContent = song["title"];
+    songInfo.appendChild(title);
+    const author = document.createElement("p");
+    author.textContent = song["channelName"];
+    songInfo.appendChild(author);
+
+    const lengthLabel = document.createElement("p");
+    const songLength = parseFloat(timestamp.length);
+    lengthLabel.textContent = MusicPlayer.formatSeconds(songLength);
+    item.appendChild(lengthLabel);
+
+    return item;
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1) + min);
+}

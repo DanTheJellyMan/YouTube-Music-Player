@@ -273,7 +273,8 @@ main > #author > a {
     font-size: 1rem;
     font-weight: 500;
     color: hsl(0,0%,20%);
-    overflow-wrap: break-word;
+    overflow-wrap: break-word; /* idk if this is necessary */
+    text-overflow: ellipsis !important;
 }
 
 main > #timeline {
@@ -519,13 +520,64 @@ footer > #queue {
     flex-direction: column;
     justify-content: center;
     align-items: center;
+    gap: 20px;
 
+    padding: 10px 5px;
     overflow-y: auto;
+
     background-color: var(--queue-color);
     scrollbar-width: thin;
 }
+#queue > * {
+    display: grid;
+    justify-content: space-between;
+    align-items: center;
+    grid-template-rows: 1fr;
+    grid-template-columns: 0.5fr 2fr 0.5fr;
+    gap: 5px;
 
+    width: 100%;
+    height: 50px;
 
+    background-color: hsla(0,0%,25%,0.15);
+    border-radius: 5px;
+}
+#queue > * > * {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#queue > * > div {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    gap: 2px;
+    cursor: pointer;
+}
+#queue > * > div > * {
+    text-align: start;
+
+    width: 100%;
+    height: fit-content;
+    margin: 0;
+    overflow: hidden;
+
+    color: hsl(0,0%,5%);
+    font-weight: bold;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#queue > * > div > *:nth-of-type(2) {
+    color: hsl(0,0%,10%);
+    font-weight: normal;
+}
+
+#queue > * > p {
+    height: fit-content;
+}
 
 img {
     user-select: none;
@@ -539,7 +591,7 @@ img {
     opacity: 0%;
 }
 
-/* Adjust player for vertical format */
+/* Adjust for vertical format */
 @container music-player (max-aspect-ratio: 1 / 1) {
     header > #open-settings {
         width: auto;
@@ -547,7 +599,7 @@ img {
     }
 }
 
-/* Compensate for thin player formats */
+/* Adjust for thin player formats */
 @container music-player (width < 185px) {
     header {
         gap: 0;
@@ -559,7 +611,7 @@ img {
     }
 }
 
-/* Compensate for short player formats */
+/* Adjust for short player formats */
 @container music-player (height < 335px) {
     header > #open-settings {
         width: auto;

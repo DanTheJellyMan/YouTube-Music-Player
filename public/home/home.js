@@ -1,4 +1,4 @@
-import MusicPlayer from "./PlayerModule.js";
+import MusicPlayer from "./MusicPlayer.js";
 globalThis["MusicPlayer"] = MusicPlayer;
 
 const FETCH_INTERVAL_SECONDS = 30;
@@ -80,7 +80,8 @@ async function fetchPlaylists() {
 
     const playlists = await res.json();
     for (const playlist of playlists) {
-        createPlaylistEl(playlist);
+        const el = createPlaylistEl(playlist);
+        playlistList.appendChild(el);
     }
 
     endFetchingMode();
@@ -111,7 +112,7 @@ function createPlaylistEl(playlist) {
     progressEl.textContent = `Songs: ${progress}`;
     element.appendChild(progressEl);
 
-    playlistList.appendChild(element);
+    return element;
 }
 
 async function initPlayer(playlist = null) {
