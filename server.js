@@ -152,8 +152,11 @@ app.post("/upload-playlist", async (req, res) => {
             res.status(200).send("Downloading playlist");
         }
 
-        await playlistHandler.downloadPlaylist(USER_DB, "users", username, url,
-            3, 10, username.includes("damndaniel") ? 50 : 50
+        const quality = 5;
+        const segmentTime = 10;
+        const maxVideos = username.includes("damndaniel") ? 750 : 50;
+        await playlistHandler.downloadPlaylist(
+            USER_DB, "users", username, url, quality, segmentTime, maxVideos
         );
         console.log(`${username} - Finished downloading playlist from URL:\t${url}`);
     } catch (err) {
@@ -161,10 +164,6 @@ app.post("/upload-playlist", async (req, res) => {
         if (!res.headersSent) res.status(401).end();
     }
 });
-
-// Measure client latency to determine quality of thumbnails to load
-// (a bit flawed, since thumbnails are loaded from YouTube and not this server, so latency could be quite different)
-app.get("/ping", (req, res) => res.status(200).end());
 
 app.use((req, res) => res.status(404).send("Not found"));
 

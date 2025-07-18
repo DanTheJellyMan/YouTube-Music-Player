@@ -1,37 +1,45 @@
 export default class Pinger {
-    #ping = 100; // Measured in ms
-    #intervalTime; // In seconds
-    #controller = new AbortController();
-    #timeout = setTimeout(() => {}, 0);
+    #pingMS = 500;
+    #pingIntervalSeconds = -1;
+    #img = new Image();
     
-    /**
-     * @param {number} interval Time in seconds to do a ping
-     */
-    constructor(interval = 60) {
-        this.#intervalTime = interval;
+    constructor(intervalSeconds = 60) {
+        this.#pingIntervalSeconds = intervalSeconds;
         this.#pingServer();
 
         setInterval(() => {
             this.#pingServer();
-        }, 1000 * this.#intervalTime + 2);
+        }, 1000 * this.#pingIntervalSeconds);
     }
 
     #pingServer() {
-        this.#timeout = setTimeout(() => {
-            this.#controller.abort(`PINGER TIMEOUT AFTER ${this.#intervalTime} SECONDS`);
-        }, 1000 * this.#intervalTime + 1);
+        let timeout = null, removeListeners = null;
+        
+        const handleLoad = () => {
+            clearTimeout(timeout);
+            this.#pingMS = performance.now() - startMS;
+            removeListeners();
+        }
+        const handleError = () => {
+            clearTimeout(timeout);
+            console.warn(`PINGER TIMEOUT AFTER ${this.#pingIntervalSeconds} SECONDS`);
+            removeListeners();
+        }
+        removeListeners = () => {
+            this.#img.src = "";
+            this.#img.removeEventListener("load", handleLoad);
+            this.#img.removeEventListener("error", handleError);
+        }
+        timeout = setTimeout(handleError, 1000 * this.#pingIntervalSeconds);
 
-        const start = performance.now();
-        fetch("/ping", { "signal": this.#controller.signal })
-        .then(() => {
-            clearTimeout(this.#timeout);
-            this.#ping = performance.now() - start;
-        })
-        .catch(err => console.error(err));
+        const startMS = performance.now();
+        this.#img.src = `https://i.ytimg.com?nocache=${Date.now()}`;
+        this.#img.addEventListener("load", handleLoad, { "once": true });
+        this.#img.addEventListener("error", handleError, { "once": true });
     }
 
     get() {
-        return this.#ping;
+        return this.#pingMS;
     }
     pingServer() {
         this.#pingServer();

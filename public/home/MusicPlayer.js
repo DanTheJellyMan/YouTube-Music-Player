@@ -1,7 +1,7 @@
 import Pinger from "./Pinger.js";
 
 export default class MusicPlayer extends HTMLElement {
-    static #pinger = new Pinger(90);
+    static #pinger = new Pinger(60);
     static #stylesheet = fetch(`./MusicPlayer.css`)
         .then(res => res.text())
         .then(text => new CSSStyleSheet().replace(text));
@@ -515,16 +515,16 @@ export default class MusicPlayer extends HTMLElement {
 
         const thumbnail_img = shadow.querySelector("#thumbnail > img");
         thumbnail_img.src = "";
-        let thumbnailSrc = "";
         const ping = MusicPlayer.getPing();
-        if (ping < 75) {
-            thumbnailSrc = thumbnails.high;
-        } else if (ping < 200) {
-            thumbnailSrc = thumbnails.medium;
+        const LOW_PING = 150;
+        const MEDIUM_PING = 400;
+        if (ping < LOW_PING) {
+            thumbnail_img.src = thumbnails.high;
+        } else if (ping < MEDIUM_PING) {
+            thumbnail_img.src = thumbnails.medium;
         } else {
-            thumbnailSrc = thumbnails.low;
+            thumbnail_img.src = thumbnails.low;
         }
-        thumbnail_img.src = thumbnailSrc;
 
         const authorAnchor = shadow.querySelector("#author > a");
         authorAnchor.textContent = channelName;
@@ -790,6 +790,7 @@ customElements.define("music-player", MusicPlayer);
 function createQueueItem(song, timestamp, clickCallback, abortSignal) {
     const item = document.createElement("div");
     const miniThumbnail = document.createElement("img");
+    miniThumbnail.loading = "lazy";
     miniThumbnail.src = song.thumbnails.low;
     item.appendChild(miniThumbnail);
 

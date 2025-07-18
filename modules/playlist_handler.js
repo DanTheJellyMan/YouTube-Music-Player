@@ -191,7 +191,7 @@ async function fetchOptions(options) {
  * @param {string} username
  * @param {string} playlistUrl
  * @param {number} quality Overall quality of audio (0 highest - 9 lowest)
- * @param {number} segmentTime Length of audio chunks
+ * @param {number} segmentTime Length of audio chunks (seconds)
  * @param {number} maxVideos Max amount of videos to download from playlist
  * @returns {Promise<string>} Resolves folder name of playlist
  */
