@@ -105,7 +105,7 @@ export default class MusicPlayer extends HTMLElement {
 
         // Ensure element is fully parsed before any resizing
         // Avoids issues of un-initialized CSS properties being used
-        waitForStyleInit();
+        waitForStyleInit(handleResizeObserver);
 
         this.#hostObserver = new ResizeObserver(handleResizeObserver);
         this.#hostObserver.observe(host);
@@ -172,8 +172,7 @@ export default class MusicPlayer extends HTMLElement {
             host.#resizeQueue(width, height);
         }
 
-        function waitForStyleInit(PAGE_RENDERS_BEFORE_OK = 10) {
-            let callback = handleResizeObserver;
+        function waitForStyleInit(callback = function(){}, PAGE_RENDERS_BEFORE_OK = 10) {
             for (let renders = 0; renders < PAGE_RENDERS_BEFORE_OK; renders++) {
                 callback = () => requestAnimationFrame(callback);
             }
@@ -252,8 +251,13 @@ export default class MusicPlayer extends HTMLElement {
         this.#audio.currentTime = newTime;
     }
     seekNextTrack() {
-        const timestamp = this.#playlistTimestamps[this.#playlistTimestampsIndex];
-        const endTime = parseFloat(timestamp.startTime) + parseFloat(timestamp.length);
+        const currentIndex = this.#playlistTimestampsIndex;
+        const maxIndex = this.#playlistTimestamps.length - 1;
+        const nextIndex = Math.min(currentIndex + 1, maxIndex);
+
+        const endTime = parseFloat(
+            this.#playlistTimestamps[nextIndex].startTime
+        );
         this.#audio.currentTime = endTime;
     }
     seekPreviousTrack() {
@@ -410,8 +414,6 @@ export default class MusicPlayer extends HTMLElement {
             this.#hls.loadSource(`/play/${encodedPlayistName}/`);
             this.#hls.attachMedia(this.#audio);
         }
-
-        this.shufflePlaylist(100);
     }
 
     // Optional
@@ -425,20 +427,21 @@ export default class MusicPlayer extends HTMLElement {
         iterations = Math.max(1, iterations);
 
         for (let i=0; i<iterations; i++) {
-            const songs = this.#playlist.songs;
-            const tempSongs = Array(songs.length);
-            let nextIndex = 0;
+            const timestamps = this.#playlistTimestamps;
+            const tempTimestamps = Array(timestamps.length);
 
-            while (songs.length > 0) {
-                const randomIndex = randomInt(0, songs.length-1);
-
-                // Remove song and add it to tempSongs
-                tempSongs[nextIndex] = songs.splice(randomIndex, 1)[0];
-                nextIndex++;
+            for (let i=0; i<tempTimestamps.length; i++) {
+                const randomIndex = randomInt(0, timestamps.length-1);
+                tempTimestamps[i] = timestamps.splice(randomIndex, 1)[0];
             }
-            this.#playlist.songs = tempSongs;
+            this.#playlistTimestamps = tempTimestamps;
         }
 
+        this.#audio.currentTime = parseFloat(
+            this.#playlistTimestamps[this.#playlistTimestampsIndex].startTime
+        );
+        
+        this.#alignPlaylistToTimestampsOrder();
         this.updateQueueOrder();
     }
 
@@ -534,28 +537,31 @@ export default class MusicPlayer extends HTMLElement {
     
     #findCurrentTimestampIndex() {
         const currentAbsoluteTime = this.currentTime(true);
+
         for (let i=0; i<this.#playlistTimestamps.length; i++) {
             const timestamp = this.#playlistTimestamps[i];
             const startTime = parseFloat(timestamp.startTime);
             const length = parseFloat(timestamp.length);
+
             if (currentAbsoluteTime >= startTime &&
                 currentAbsoluteTime < startTime+length) {
                 return i;
             }
         }
+
         return -1;
     }
 
     updateQueueOrder() {
         const queue = this.shadowRoot.querySelector("#queue");
-        if (!queue) return;
+        if (!queue) return console.warn("No queue element found");
         for (const child of queue.children) this.#removeQueueItem(child);
 
         const { songs } = this.#playlist;
         for (let i=0; i<songs.length; i++) {
             const timestamp = this.#playlistTimestamps[i];
+            
             const item = createQueueItem(songs[i], timestamp, () => {
-                console.log(timestamp.filename === songs[i].filename)
                 this.#audio.currentTime = parseFloat(timestamp.startTime);
             }, this.#controller.signal);
             queue.appendChild(item);

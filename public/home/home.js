@@ -119,6 +119,7 @@ async function initPlayer(playlist = null) {
     const player = new MusicPlayer();
     player.setPlaylist(playlist);
     await player.setPlaylistTimestamps();
+    player.shufflePlaylist(100);
     player.initPlayer();
     document.body.appendChild(player);
 }

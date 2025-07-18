@@ -118,10 +118,12 @@ app.get("/play/:playlist/", (req, res) => {
     const userFolder = dbHandler.find(USER_DB, "users", [
         ["username", username]
     ])[0]["folder_name"];
+
     const playlistName = decodeURIComponent(req.params.playlist).trim();
     const playlistPath = path.join(
         PARENT_DIR, "user_playlists", userFolder, playlistName, "playlist.m3u8"
     );
+
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.sendFile(playlistPath);
 });
@@ -160,8 +162,7 @@ app.post("/upload-playlist", async (req, res) => {
     }
 });
 
-// Simple route to allow client to measure latency, to determine
-// what quality of assets (currently for thumbnails) to load
+// Measure client latency to determine quality of thumbnails to load
 // (a bit flawed, since thumbnails are loaded from YouTube and not this server, so latency could be quite different)
 app.get("/ping", (req, res) => res.status(200).end());
 

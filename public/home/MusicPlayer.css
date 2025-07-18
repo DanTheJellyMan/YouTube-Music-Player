@@ -265,22 +265,26 @@ main > #author {
 
     height: 8.25%;
     padding-top: 6px;
-    overflow: auto;
-    scrollbar-width: thin;
+    overflow: hidden;
 }
 main > #author > a {
     text-align: center;
+
     font-size: 1rem;
+    overflow: hidden;
+
     font-weight: 500;
-    color: hsl(0,0%,20%);
-    overflow-wrap: break-word; /* idk if this is necessary */
-    text-overflow: ellipsis !important;
+    color: hsl(0,0%,20%);    
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 main > #timeline {
     display: flex;
     justify-content: center;
     align-items: center;
+    overflow: visible;
+
     height: 10%;
 }
 
