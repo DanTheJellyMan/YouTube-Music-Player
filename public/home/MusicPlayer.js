@@ -255,15 +255,19 @@ export default class MusicPlayer extends HTMLElement {
         const maxIndex = this.#playlistTimestamps.length - 1;
         const nextIndex = Math.min(currentIndex + 1, maxIndex);
 
+        this.#playlistTimestampsIndex = nextIndex;
         const endTime = parseFloat(
             this.#playlistTimestamps[nextIndex].startTime
         );
         this.#audio.currentTime = endTime;
     }
     seekPreviousTrack() {
-        const index = Math.max(0, this.#playlistTimestampsIndex - 1);
+        const minIndex = 0;
+        const prevIndex = Math.max(minIndex, this.#playlistTimestampsIndex - 1);
+        
+        this.#playlistTimestampsIndex = prevIndex;
         const startTime = parseFloat(
-            this.#playlistTimestamps[index].startTime
+            this.#playlistTimestamps[prevIndex].startTime
         );
         this.#audio.currentTime = startTime;
     }
@@ -492,7 +496,7 @@ export default class MusicPlayer extends HTMLElement {
         );
         if (CURRENT_RELATIVE_TIME >= songLength || CURRENT_ABSOLUTE_TIME < songStartTime) {
             // NOTE: it may be wise to put a "return" here for a performance boost
-            this.#playlistTimestampsIndex = this.#findCurrentTimestampIndex();
+            this.#setCorrectSong();
         }
 
         const timestamp = timestamps[this.#playlistTimestampsIndex];
@@ -535,21 +539,22 @@ export default class MusicPlayer extends HTMLElement {
         endTimeLabel.textContent = MusicPlayer.formatSeconds(length);
     }
     
-    #findCurrentTimestampIndex() {
+    #setCorrectSong() {
         const currentAbsoluteTime = this.currentTime(true);
+        const currentTimestamp = this.#playlistTimestamps[this.#playlistTimestampsIndex];
+        const startTime = parseFloat(currentTimestamp.startTime);
+        const endTime = startTime + parseFloat(currentTimestamp.length);
 
-        for (let i=0; i<this.#playlistTimestamps.length; i++) {
-            const timestamp = this.#playlistTimestamps[i];
-            const startTime = parseFloat(timestamp.startTime);
-            const length = parseFloat(timestamp.length);
-
-            if (currentAbsoluteTime >= startTime &&
-                currentAbsoluteTime < startTime+length) {
-                return i;
-            }
+        if (currentAbsoluteTime < startTime) {
+            this.seekPreviousTrack();
+            // this.#playlistTimestampsIndex--;
+        } else if (currentAbsoluteTime >= endTime) {
+            this.seekNextTrack();
+            // this.#playlistTimestampsIndex++;
         }
-
-        return -1;
+        // let newSong = this.#playlistTimestamps[this.#playlistTimestampsIndex];
+        // let newSongStartTime = parseFloat(newSong.startTime);
+        // this.#audio.currentTime = newSongStartTime;
     }
 
     updateQueueOrder() {

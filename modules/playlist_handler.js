@@ -30,74 +30,99 @@ const PARENT_DIR = require.main.path;
 const serverConfig = require("./server_config.js");
 const API_KEY = serverConfig.youtubeAPIKey;
 
+// TODO:
+// - refactor playlist download preprocessing for visuals
+// - make progress stored in a file instead of holding it all in RAM
+//   (same for downloadPlaylist() function)
+
 /**
  * Perform fetch request for playlist link, then only
  * return essential info about playlist content
  * @param {string} link URL of YouTube playlist
- * @param {number} maxVideoLength Max length in minutes a video may be
- * @returns {Promise<Video[]>} Promise resovles to array of objects containing each video's info
+ * @param {string} tempVideosPath Path of temp file that holds all Video objects
+ * @param {number} maxVideoLengthMinutes Max length a video may be
+ * @returns {Promise<void>}
  */
-async function parseYTLink(link, maxVideoLength = 45) {
+async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
     link = link.trim().normalize("NFKC");
     if (!link.startsWith("youtube.com/playlist?list=")) {
         throw Error("Invalid playlist link");
     }
-    const trackI = link.indexOf("&si="); // Tracking-info index in URL
-    link = link.substring(
+    const trackI = link.indexOf("&si="); // Unnecessary tracking param
+    const playlistId = link.substring(
         link.indexOf("list=")+5,
         (trackI === -1) ? link.length : trackI
     );
-    console.log(`Retrieving playlist info...(ID = ${link})`);
+    console.log(`Retrieving playlist info...(ID = ${playlistId})`);
 
-    const links = [];
+    const TIMEOUT_DELAY_MS = 1500;
     let nextPageToken = "";
+    let count = 0;
     do {
-        const controller = new AbortController();
-        let res, json;
+        const playlistItemsURL =
+            `https://www.googleapis.com/youtube/v3/playlistItems?`+
+            `part=snippet&playlistId=${playlistId}&maxResults=50&`+
+            `pageToken=${nextPageToken}&key=${API_KEY}`;
+        let playlist;
         try {
-            let timeout = setTimeout(() => controller.abort(), 1500);
-            res = await fetch(
-                `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${link}&maxResults=50&pageToken=${nextPageToken}&key=${API_KEY}`,
-                { "signal": controller.signal }
-            );
-            clearTimeout(timeout);
-            if (!res.ok) {
-                console.error(res);
-                throw Error();
-            }
-            json = await res.json();
+            playlist = await (
+                await fetchWithTimeout(playlistItemsURL, TIMEOUT_DELAY_MS)
+            ).json();
 
-            // Ignore excessively-lengthy items (that's what she said)
-            timeout = setTimeout(() => controller.abort(), 3500);
-            const ids = json.items.map(vid => vid.snippet.resourceId.videoId).join(",");
-            res = await fetch(
-                `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${API_KEY}`,
-                { "signal": controller.signal }
+            const ids = playlist.items.map(vid => {
+                return vid.snippet.resourceId.videoId;
+            }).join(",");
+            const videoDetailsURL =
+                `https://www.googleapis.com/youtube/v3/videos?`+
+                `part=contentDetails&id=${ids}&key=${API_KEY}`;
+            const videoDetails = await (
+                await fetchWithTimeout(videoDetailsURL, TIMEOUT_DELAY_MS)
+            ).json();
+
+            const badIdsSet = new Set(
+                getBadIdArray(videoDetails.items, maxVideoLengthMinutes)
             );
-            clearTimeout(timeout);
-            if (!res.ok) throw Error();
-            const badIds = (await res.json()).items
-                .map(vid => {
-                    if (parseMinutes(vid.contentDetails.duration) > maxVideoLength) {
-                        return vid.id;
-                    }
-                })
-                .filter(badId => badId !== undefined);
-            const badIdsSet = new Set(badIds);
-            json.items = json.items.filter(vid => {
+            playlist.items = playlist.items.filter(vid => {
                 return !badIdsSet.has(vid.snippet.resourceId.videoId)
             });
         } catch (err) {
             console.error(err);
-            controller.abort();
             continue;
         }
 
-        nextPageToken = json.nextPageToken;
-        links.push(...await filterInfo(json.items));
+        nextPageToken = playlist.nextPageToken;
+        await filterInfo(playlist.items, tempVideosPath);
+        console.log(++count);
+
     } while (nextPageToken);
 
-    return links;
+    async function fetchWithTimeout(resource = "", timeoutDelayMS = 5000, options = {}) {
+        const controller = new AbortController();
+        options["signal"] = controller.signal;
+        let res = null;
+        try {
+            const timeout = setTimeout(() => {
+                controller.abort(`TIMEOUT WHILE FETCHING RESOUCE: ${resource}`)
+            }, timeoutDelayMS);
+            res = await fetch(resource, options);
+            clearTimeout(timeout);
+            if (!res.ok) throw Error(await res.text());
+            return res;
+        } catch (err) {
+            controller.abort(err);
+            throw Error(res);
+        }
+    }
+
+    function getBadIdArray(items, maxTimeMinutes) {
+        return items
+        .map(vid => {
+            if (parseMinutes(vid["contentDetails"]["duration"]) > maxTimeMinutes) {
+                return vid.id;
+            }
+        })
+        .filter(badId => badId !== undefined);
+    }
 
     function parseMinutes(str) {
         str = str.toUpperCase();
@@ -122,51 +147,64 @@ async function parseYTLink(link, maxVideoLength = 45) {
         return parseInt(hours) * 60 + parseInt(minutes);
     }
 }
+
 /**
- * Returns only important info and removes deleted videos
+ * Only keeps important info and removes deleted videos, and adds this to tempVideos.txt
  * @param {object[]} items 
- * @returns {Promise<Video[]>}
+ * @param {string} tempVideosPath
+ * @param {number} FETCH_TIMEOUT_DELAY_MS
+ * @returns {Promise<void>}
  */
-async function filterInfo(items) {
+async function filterInfo(items, tempVideosPath, FETCH_TIMEOUT_DELAY_MS = 750) {
     const videos = [];
     for (let item of items) {
         item = item.snippet;
 
         // Ignore deleted videos
-        if (item.title === "Deleted video" || item.description === "This video is unavailable.") continue;
+        if (item.title === "Deleted video" ||
+            item.description === "This video is unavailable."
+        ) continue;
         
         videos.push({
             "title": item.title.trim().normalize("NFKC"),
             "channelName": item.videoOwnerChannelTitle.normalize("NFKC").trim(),
             "channelUrl": `https://www.youtube.com/channel/${item.videoOwnerChannelId}`,
             "videoUrl": `https://www.youtube.com/watch?v=${item.resourceId.videoId}`,
-            "thumbnails": await fetchOptions(item.thumbnails)
+            "thumbnails": await fetchOptions(item.thumbnails, FETCH_TIMEOUT_DELAY_MS)
         });
     }
-    return videos;
+
+
+    const tempVideos = JSON.parse(
+        await fs.readFile(tempVideoPath, { "encoding": "utf8" })
+    );
+    tempVideos.push(...videos);
+    await fs.writeFile(tempVideoArrayPath, JSON.stringify(tempVideos));
 }
 
 /**
  * Get a low, medium, and high option for the thumbnail
- * @param {any} options 
+ * @param {object} options 
+ * @param {number} FETCH_TIMEOUT_DELAY_MS
  * @returns {Promise<Thumbnails>}
  */
-async function fetchOptions(options) {
+async function fetchOptions(options, FETCH_TIMEOUT_DELAY_MS) {
     // Sort temp items by height
     const temp = Object.values(options);
     for (let i=0; i<temp.length; i++) {
+
         for (let j=0; j<temp.length; j++) {
+            if (temp[j] === temp[i]) continue;
             const controller = new AbortController();
+
             try {
                 const timeout = setTimeout(() => {
-                    controller.abort(
-                        `TIMEOUT WHILE FETCHING URL: ${temp[j].url}`
-                    );
-                }, 1500);
-                const req = await fetch(temp[j].url, { "signal": controller.signal });
-
+                    controller.abort(`TIMEOUT WHILE FETCHING URL: ${temp[j].url}`);
+                }, FETCH_TIMEOUT_DELAY_MS);
+                const res = await fetch(temp[j].url, { "signal": controller.signal });
                 clearTimeout(timeout);
-                if (temp[j].height > temp[i].height && req.ok) {
+
+                if (temp[j].height > temp[i].height && res.ok) {
                     // Swap
                     const other = temp[i];
                     temp[i] = temp[j];
@@ -204,7 +242,9 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     const playlistTimestampsPath = path.join(playlistDir, "playlistTimestamps.json");
     await fs.writeFile(playlistTimestampsPath, "[]");
 
-    const videos = await parseYTLink(playlistUrl);
+    const tempVideosPath = path.join(playlistDir, "tempVideos.txt");
+    await fs.writeFile(tempVideosPath, "");
+    const videos = await parseYTLink(playlistUrl, tempVideosPath);
     logPlaylist(videos, username);
 
     // Download songs from YouTube playlist
