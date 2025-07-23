@@ -156,7 +156,6 @@ async function filterInfo(items) {
     for (let item of items) {
         item = item.snippet;
 
-        // Ignore deleted videos
         if (item.title === "Deleted video" ||
             item.description === "This video is unavailable."
         ) continue;
@@ -301,11 +300,10 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
 
         try {
             await fs.mkdir(songDir, { recursive: false });
-            await fs.access(songDir, fs.constants.F_OK); // Test that access to the song directory works
+            await fs.access(songDir, fs.constants.F_OK);
             await downloadVideo(song.videoUrl, playlistDir, filename, quality, segmentTime);
             await addPlaylistTimestamp(playlistTimestampsPath, path.join(songDir, `${filename}.m3u8`));
-            
-            // JSON is read again in case folders (aka. songs) were deleted
+
             const playlists = JSON.parse(getUserJSON(db, table, username).playlists_json);
             const playlist = playlists.find(item => item.name === playlistName);
             let vidCount = ++playlist.progress;
@@ -341,8 +339,8 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
  */
 function handleSongDownloadError(folderToRemove, song, err) {
     try {
-        // Timeout before removing failed songs, because errors were happening
-        // when trying to do this immediately 
+        // Timeout before removing failed songs
+        // Avoids errors from trying to immediately do this
         setTimeout(() => {
             fs.rm(folderToRemove, { "recursive": true, "force": true });
         }, 1000);
@@ -394,7 +392,7 @@ async function addPlaylistTimestamp(playlistTimestampsPath, songM3U8Path, index 
  * @param {string} m3u8_path 
  * @returns {Promise<string>} Length with arbitrary precision
  */
-function getSongLength(m3u8_path) {
+async function getSongLength(m3u8_path) {
     const commands = [
         "-i", path.basename(m3u8_path),
         "-show_entries", "format=duration",
@@ -406,9 +404,12 @@ function getSongLength(m3u8_path) {
 
     let length = "";
     cmd.stdout.on("data", d => length += d.toString().trim());
-    return done.then(() => {
-        return length.trim();
-    });
+    cmd.stderr.on("error", err => {});
+    
+    await done;
+    cmd.removeAllListeners();
+    cmd.destroy();
+    return length.trim();
 }
 
 /**
@@ -503,7 +504,7 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             ytdlp = createCMD("yt-dlp", [
                 `-f`, `bestaudio[ext=webm]`,
                 `--ignore-errors`, `--geo-bypass`,
-                `-o`, `-`, // Export to stdout
+                `-o`, `-`,
                 `${url}`,
             ], options);
             
@@ -546,7 +547,6 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             handleStreamPiping(ytdlp.cmd.stdout, filterFFmpeg.cmd.stdin);
             handleStreamPiping(filterFFmpeg.cmd.stdout, encodeFFmpeg.cmd.stdin);
 
-            // await Promise.all([ytdlp.done, filterFFmpeg.done, encodeFFmpeg.done]);
             await encodeFFmpeg.done;
             FFmpegThreadManager.removeProcess();
             cleanup(ytdlp.cmd);
@@ -686,4 +686,4 @@ module.exports = {
     downloadPlaylist,
     downloadVideo,
     createPlaylistFolder
-};
+}
