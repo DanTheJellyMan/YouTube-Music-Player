@@ -9,7 +9,7 @@ const Database = require("better-sqlite3");
 const { find, addRow, update, deleteRow } = require("./database_handler.js");
 const playlistHandler = require("./playlist_handler.js");
 const { createFolder } = require("./general_helpers.js");
-const serverConfig = require("./server_config.js");
+const serverConfig = require("./ServerConfig.js");
 
 /**
  * @param {Express} app 

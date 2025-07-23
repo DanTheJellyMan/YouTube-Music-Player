@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const { spawn } = require("child_process");
 
 /**
  * Generate random integer between two integers
@@ -25,11 +26,11 @@ function randomFloat(min, max) {
 /**
  * @param {string} str 
  * @param {string} target 
- * @param {number} startPos Integer
+ * @param {number} startPos
  * @returns {number}
  */
 function reverseIndexOf(str, target, startPos = 0) {
-    for (let i=str.length-startPos-1; i>=0; i--) {
+    for (let i = str.length - startPos-1; i >= 0; i--) {
         if (str.substring(i, i+target.length) === target) {
             return i;
         }
@@ -76,11 +77,51 @@ async function createFolder(path) {
     }
 }
 
+/**
+ * Creates a child process spawn
+ * @param {string} command
+ * @param {string[]} options
+ * @param {SpawnOptionsWithoutStdio} options2 Typically contains { cwd: [PROCESS DIRECTORY] }
+ * @returns {{"cmd": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} Resolve upon process close
+ */
+function createCMD(command, options, options2 = { "cwd": PARENT_DIR }) {
+    let cmd;
+    try {
+        cmd = spawn(command, options, options2);
+    } catch (err) { console.error(err.toString()); return null; }
+    cmd.stdout.on("data", data => {});
+    cmd.stdout.on("error", err => {});
+    cmd.stdin.on("data", data => {});
+    cmd.stdin.on("error", err => {});
+    cmd.stderr.on("data", err => {});
+    cmd.stderr.on("error", err => {});
+    cmd.on("error", err => {});
+    
+    const done = new Promise((resolve, reject) => {
+        try {
+            cmd.on("exit", code => {
+                cmd.removeAllListeners();
+                if (code !== 0 && command !== "ffprobe") {
+                    return reject(
+                        Error(`${command} CMD EXITED WITH ERROR CODE ${code}`)
+                    );
+                }
+                return resolve(`${code}`);
+            });
+        } catch (err) {
+            return reject(err);
+        }
+    });
+
+    return { cmd, done };
+}
+
 module.exports = {
     randomInt,
     randomFloat,
     reverseIndexOf,
     includes,
 
-    createFolder
+    createFolder,
+    createCMD
 }

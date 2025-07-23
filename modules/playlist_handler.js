@@ -16,7 +16,6 @@
 
 const path = require("path");
 const fs = require("fs/promises");
-const { readFileSync } = require("fs");
 
 const { v4: uuid } = require("uuid");
 const { Decimal } = require("decimal.js");
@@ -24,20 +23,16 @@ Decimal.set({ "precision": 500_000 });
 const { spawn } = require("child_process");
 
 const { find, update } = require("./database_handler.js");
-const { createFolder } = require("./general_helpers.js");
+const { createFolder, createCMD } = require("./general_helpers.js");
+const ThreadManager = require("./ThreadManager.js");
 
 const PARENT_DIR = require.main.path;
-const serverConfig = require("./server_config.js");
+const serverConfig = require("./ServerConfig.js");
 const API_KEY = serverConfig.youtubeAPIKey;
-
-// TODO:
-// - refactor playlist download preprocessing for visuals
-// - make progress stored in a file instead of holding it all in RAM
-//   (same for downloadPlaylist() function)
+const FFmpegThreadManager = new ThreadManager();
 
 /**
- * Perform fetch request for playlist link, then only
- * return essential info about playlist content
+ * Perform fetch request for playlist link, then writes essential info about playlist's content into temp file at playlist's file directory
  * @param {string} link URL of YouTube playlist
  * @param {string} tempVideosPath Path of temp file that holds all Video objects
  * @param {number} maxVideoLengthMinutes Max length a video may be
@@ -63,7 +58,7 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
             `https://www.googleapis.com/youtube/v3/playlistItems?`+
             `part=snippet&playlistId=${playlistId}&maxResults=50&`+
             `pageToken=${nextPageToken}&key=${API_KEY}`;
-        let playlist;
+        let playlist = null;
         try {
             playlist = await (
                 await fetchWithTimeout(playlistItemsURL, TIMEOUT_DELAY_MS)
@@ -91,7 +86,10 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
         }
 
         nextPageToken = playlist.nextPageToken;
-        await filterInfo(playlist.items, tempVideosPath);
+        const filteredVideosStr = (await filterInfo(playlist.items))
+            .map(Video => JSON.stringify(Video))
+            .join("\n");
+        await fs.appendFile(tempVideosPath, `${filteredVideosStr}\n`);
         console.log(++count);
 
     } while (nextPageToken);
@@ -102,7 +100,7 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
         let res = null;
         try {
             const timeout = setTimeout(() => {
-                controller.abort(`TIMEOUT WHILE FETCHING RESOUCE: ${resource}`)
+                controller.abort(`TIMEOUT WHILE FETCHING RESOUCE: ${resource}`);
             }, timeoutDelayMS);
             res = await fetch(resource, options);
             clearTimeout(timeout);
@@ -149,13 +147,11 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
 }
 
 /**
- * Only keeps important info and removes deleted videos, and adds this to tempVideos.txt
+ * Returns new Video array with only important info and no deleted videos
  * @param {object[]} items 
- * @param {string} tempVideosPath
- * @param {number} FETCH_TIMEOUT_DELAY_MS
- * @returns {Promise<void>}
+ * @returns {Promise<Video[]>}
  */
-async function filterInfo(items, tempVideosPath, FETCH_TIMEOUT_DELAY_MS = 750) {
+async function filterInfo(items) {
     const videos = [];
     for (let item of items) {
         item = item.snippet;
@@ -170,49 +166,27 @@ async function filterInfo(items, tempVideosPath, FETCH_TIMEOUT_DELAY_MS = 750) {
             "channelName": item.videoOwnerChannelTitle.normalize("NFKC").trim(),
             "channelUrl": `https://www.youtube.com/channel/${item.videoOwnerChannelId}`,
             "videoUrl": `https://www.youtube.com/watch?v=${item.resourceId.videoId}`,
-            "thumbnails": await fetchOptions(item.thumbnails, FETCH_TIMEOUT_DELAY_MS)
+            "thumbnails": await fetchOptions(item.thumbnails)
         });
     }
-
-
-    const tempVideos = JSON.parse(
-        await fs.readFile(tempVideoPath, { "encoding": "utf8" })
-    );
-    tempVideos.push(...videos);
-    await fs.writeFile(tempVideoArrayPath, JSON.stringify(tempVideos));
+    return videos;
 }
 
 /**
  * Get a low, medium, and high option for the thumbnail
  * @param {object} options 
- * @param {number} FETCH_TIMEOUT_DELAY_MS
  * @returns {Promise<Thumbnails>}
  */
-async function fetchOptions(options, FETCH_TIMEOUT_DELAY_MS) {
+async function fetchOptions(options) {
     // Sort temp items by height
     const temp = Object.values(options);
     for (let i=0; i<temp.length; i++) {
-
         for (let j=0; j<temp.length; j++) {
             if (temp[j] === temp[i]) continue;
-            const controller = new AbortController();
-
-            try {
-                const timeout = setTimeout(() => {
-                    controller.abort(`TIMEOUT WHILE FETCHING URL: ${temp[j].url}`);
-                }, FETCH_TIMEOUT_DELAY_MS);
-                const res = await fetch(temp[j].url, { "signal": controller.signal });
-                clearTimeout(timeout);
-
-                if (temp[j].height > temp[i].height && res.ok) {
-                    // Swap
-                    const other = temp[i];
-                    temp[i] = temp[j];
-                    temp[j] = other;
-                }
-            } catch (err) {
-                console.error(err);
-                controller.abort();
+            if (temp[j].height > temp[i].height) {
+                const other = temp[i];
+                temp[i] = temp[j];
+                temp[j] = other;
             }
         }
     }
@@ -220,6 +194,78 @@ async function fetchOptions(options, FETCH_TIMEOUT_DELAY_MS) {
         "low": temp[0].url,
         "medium": temp[Math.floor((temp.length-1)/2)].url,
         "high": temp[temp.length-1].url
+    }
+}
+
+class TempVideoFileParser {
+    static createReadStream = require("fs").createReadStream;
+    static createReadlineInterface = require("readline").createInterface
+    #filepath = null;
+    #lastByteRead = 0;
+
+    constructor(filepath = "") {
+        this.#filepath = filepath;
+    }
+
+    /**
+     * @param {string} targetVideoUrl 
+     * @returns {Promise<Video | null>}
+     */
+    readNextVideo(targetVideoUrl = null) {
+        return new Promise((resolve, reject) => {
+            const stream = TempVideoFileParser.createReadStream(this.#filepath, {
+                "start": this.#lastByteRead
+            });
+            const readline = TempVideoFileParser.createReadlineInterface({
+                "input": stream,
+                "crlfDelay": Infinity
+            });
+            let settled = false;
+
+            readline.on("line", line => {
+                if (settled) return;
+
+                this.#lastByteRead += Buffer.byteLength(line, "utf8") + 1;
+                if (targetVideoUrl === null) {
+                    settled = true;
+                    this.#handleEndOfStream(stream, readline);
+                    return resolve(JSON.parse(line));
+                }
+
+                const vidUrl = JSON.parse(line)["videoUrl"];
+                if (vidUrl !== targetVideoUrl) return;
+
+                settled = true;
+                this.#handleEndOfStream(stream, readline);
+                return resolve(JSON.parse(line));
+            });
+
+            stream.once("error", err => {
+                if (settled) return;
+                settled = true;
+                
+                this.#handleEndOfStream(stream, readline);
+                return reject(err);
+            });
+
+            stream.once("end", () => {
+                if (settled) return;
+                settled = true;
+
+                this.#handleEndOfStream(stream, readline);
+                return resolve(null);
+            });
+        });
+    }
+
+    /**
+     * @param {ReadStream} stream 
+     * @param {Interface} readline 
+     */
+    #handleEndOfStream(stream, readline) {
+        readline.removeAllListeners();
+        stream.removeAllListeners();
+        stream.destroy();
     }
 }
 
@@ -243,12 +289,12 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     await fs.writeFile(playlistTimestampsPath, "[]");
 
     const tempVideosPath = path.join(playlistDir, "tempVideos.txt");
-    await fs.writeFile(tempVideosPath, "");
-    const videos = await parseYTLink(playlistUrl, tempVideosPath);
-    logPlaylist(videos, username);
+    await parseYTLink(playlistUrl, tempVideosPath);
+    const tempVideosReader = new TempVideoFileParser(tempVideosPath);
+    logPlaylist(username, null, tempVideosPath);
 
-    // Download songs from YouTube playlist
-    for (const song of videos) {
+    let song = null;
+    while ((song = await tempVideosReader.readNextVideo()) !== null) {
         const filename = uuid();
         song["filename"] = filename;
         const songDir = path.join(playlistDir, filename);
@@ -273,6 +319,7 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         } catch (err) {
             handleSongDownloadError(songDir, song, err);
         }
+        song = null;
     }
 
     await setStartTimes(playlistTimestampsPath);
@@ -406,9 +453,27 @@ function addPlaylistToDB(db, table, username, playlistName) {
 
 /**
  * Log playlist details
- * @param {Video[]} videos 
+ * @param {string} username
+ * @param {Video[] | null} videos 
+ * @param {string} tempVideosPath
+ * @returns {Promise<void>}
  */
-function logPlaylist(videos, username = "") {
+async function logPlaylist(username = "", videos = null, tempVideosPath = "") {
+    if (!videos) {
+        videos = [];
+        const tempVideosReader = new TempVideoFileParser(tempVideosPath);
+        let video = null;
+
+        try {
+            while ((video = await tempVideosReader.readNextVideo()) !== null) {
+                videos.push(video);
+            }
+        } catch (err) {
+            console.error(err);
+            return;
+        }
+    }
+
     const MAX_VIDEOS_TO_LOG = 3;
     console.log(`${username} - Downloading playlist...(Length: ${videos.length})`);
     if (videos.length > MAX_VIDEOS_TO_LOG) {
@@ -432,58 +497,82 @@ function logPlaylist(videos, username = "") {
  */
 function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10) {
     return new Promise(async (resolve, reject) => {
-        let ytdlp, ffmpeg;
+        const options = { "cwd": path.join(playlistDir, filename) };
+        let ytdlp, filterFFmpeg, encodeFFmpeg;
         try {
             ytdlp = createCMD("yt-dlp", [
-                `-f`, `bestaudio[ext=m4a]`,
-                `--ignore-errors`,
-                "--geo-bypass",
+                `-f`, `bestaudio[ext=webm]`,
+                `--ignore-errors`, `--geo-bypass`,
                 `-o`, `-`, // Export to stdout
                 `${url}`,
-            ], { "cwd": path.join(playlistDir, filename) });
-            if (!ytdlp.cmd.stdout) {
-                throw Error(`YT-DLP ERROR!\t${JSON.stringify(ytdlp, null, 4)}`)
-            }
+            ], options);
             
-            ffmpeg = createCMD("ffmpeg", [
-                "-f", "m4a",
+            FFmpegThreadManager.addProcess();
+            const threads = FFmpegThreadManager.getAvailableThreadCount();
+            filterFFmpeg = createCMD("ffmpeg", [
+                `-threads`, threads,
+                `-filter_threads`, threads,
+                `-filter_complex_threads`, threads,
                 `-i`, `pipe:0`,
                 ...serverConfig.ffmpegOptions,
-                `-c:a`, `libmp3lame`, `-q:a`, `${quality}`,
+                `-f`, `wav`,
+                `-c:a`, `pcm_s16le`,
+                `pipe:1`
+            ], options);
+            encodeFFmpeg = createCMD("ffmpeg", [
+                `-hide_banner`,
+                `-loglevel`, `error`,
+                `-threads`, threads,
+                `-f`, `wav`,
+                `-i`, `pipe:0`,
+                `-c:a`, `libmp3lame`,
+                `-q:a`, quality,
                 `-f`, `hls`,
                 `-start_number`, `0`,
                 `-hls_list_size`, `0`,
-                `-hls_time`, `${segmentTime}`,
+                `-hls_time`, segmentTime,
                 `-hls_segment_filename`, `${filename}_%05d.ts`,
                 `${filename}.m3u8`
-            ], { "cwd": path.join(playlistDir, filename) });
-            if (!ffmpeg.cmd.stdin) {
-                throw Error(`FFMPEG ERROR!\t${JSON.stringify(ffmpeg, null, 4)}`);
-            }
+            ], options);
+
             ytdlp.cmd.stdout.on("error", err => {
                 console.error(err.toString());
             });
             ytdlp.cmd.stderr.on("data", data => {});
             ytdlp.cmd.stderr.on("error", err => {});
-            ffmpeg.cmd.stdin.on("error", err => {
-                console.error(err.toString());
-            });
+            filterFFmpeg.cmd.stderr.on("error", err => {});
+            encodeFFmpeg.cmd.stderr.on("error", err => {});
 
-            ytdlp.cmd.stdout.pipe(ffmpeg.cmd.stdin);
-            await Promise.all([ytdlp.done, ffmpeg.done]);
-            cleanup();
+            handleStreamPiping(ytdlp.cmd.stdout, filterFFmpeg.cmd.stdin);
+            handleStreamPiping(filterFFmpeg.cmd.stdout, encodeFFmpeg.cmd.stdin);
+
+            // await Promise.all([ytdlp.done, filterFFmpeg.done, encodeFFmpeg.done]);
+            await encodeFFmpeg.done;
+            FFmpegThreadManager.removeProcess();
+            cleanup(ytdlp.cmd);
+            cleanup(filterFFmpeg.cmd);
+            cleanup(encodeFFmpeg.cmd);
             resolve(); 
         } catch (err) {
-            cleanup();
+            FFmpegThreadManager.removeProcess();
+            cleanup(ytdlp.cmd);
+            cleanup(filterFFmpeg.cmd);
+            cleanup(encodeFFmpeg.cmd);
             reject(err);
         }
-        function cleanup() {
-            setTimeout(() => {
-                ytdlp.cmd.removeAllListeners();
-                ffmpeg.cmd.removeAllListeners();
-                ytdlp.cmd.kill();
-                ffmpeg.cmd.kill();
-            }, 1500);
+        function cleanup(childProcess) {
+            childProcess.removeAllListeners();
+            childProcess.kill();
+        }
+        function handleStreamPiping(readStream, writeStream) {
+            readStream.on("data", chunk => {
+                if (writeStream.write(chunk)) return;
+                readStream.pause();
+                writeStream.once("drain", () => readStream.resume());
+            });
+            readStream.on("end", () => {
+                writeStream.end();
+            });
         }
     });
 }
@@ -579,45 +668,6 @@ async function createPlaylistFolder(userFolder) {
 }
 
 /**
- * Creates a child process spawn
- * @param {string} command
- * @param {string[]} options
- * @param {SpawnOptionsWithoutStdio} options2 Typically contains { cwd: [PROCESS DIRECTORY] }
- * @returns {{"cmd": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} Resolve upon process close
- */
-function createCMD(command, options, options2 = { "cwd": PARENT_DIR }) {
-    let cmd;
-    try {
-        cmd = spawn(command, options, options2);
-    } catch (err) { console.error(err.toString()); return null; }
-    cmd.stdout.on("data", data => {});
-    cmd.stdout.on("error", err => {});
-    cmd.stdin.on("data", data => {});
-    cmd.stdin.on("error", err => {});
-    cmd.stderr.on("data", err => {});
-    cmd.stderr.on("error", err => {});
-    cmd.on("error", err => {});
-    
-    const done = new Promise((resolve, reject) => {
-        try {
-            cmd.on("exit", code => {
-                cmd.removeAllListeners();
-                if (code !== 0 && command !== "ffprobe") {
-                    return reject(
-                        Error(`${command} CMD EXITED WITH ERROR CODE ${code}`)
-                    );
-                }
-                return resolve(`${code}`);
-            });
-        } catch (err) {
-            return reject(err);
-        }
-    });
-
-    return { cmd, done };
-}
-
-/**
  * Convenience function to get user entry from DB
  * @param {BetterSQLite3.Database} db Database
  * @param {string} table Table name
@@ -635,7 +685,5 @@ module.exports = {
     filterInfo,
     downloadPlaylist,
     downloadVideo,
-    
-    createPlaylistFolder,
-    createCMD,
+    createPlaylistFolder
 };

@@ -4,7 +4,7 @@
  * @property {string} youtubeAPIKey
  * @property {HTTPSCredentials} httpsCredentials
  * @property {number} port
- * @property {string[]} corsWhitelist
+ * @property {string[] | string} corsWhitelist
  * @property {ServerConfigAccounts} accounts
  * @property {string[]} ffmpegOptions Only contains audio filters
  */

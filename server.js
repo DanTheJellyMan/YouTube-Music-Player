@@ -39,9 +39,9 @@ const playlistHandler = require(path.join(modulesPath, "playlist_handler.js"));
 const generalHelpers = require(path.join(modulesPath, "general_helpers.js"));
 
 /**
- * @type {import("./modules/server_config.js")}
+ * @type {import("./modules/ServerConfig.js")}
  */
-const serverConfig = require(path.join(modulesPath, "server_config.js"));
+const serverConfig = require(path.join(modulesPath, "ServerConfig.js"));
 
 const compression = require("compression");
 const cookieParser = require("cookie-parser");
@@ -53,7 +53,11 @@ const { USER_DB } = serverHelper.initServer(app);
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (serverConfig.corsWhitelist.includes(origin) || origin === undefined) {
+        const whitelist = serverConfig.corsWhitelist;
+        if (whitelist === "*") {
+            return callback(null, true);
+        }
+        if ((whitelist instanceof Array) && whitelist.includes(origin) || origin === undefined) {
             return callback(null, true);
         }
         return callback(`Blocked by CORS [${origin}]`);

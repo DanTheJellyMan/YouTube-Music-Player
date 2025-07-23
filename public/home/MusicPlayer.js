@@ -7,6 +7,7 @@ export default class MusicPlayer extends HTMLElement {
         .then(text => new CSSStyleSheet().replace(text));
     static observedAttributes = ["paused"];
 
+    #id = crypto.randomUUID();
     #controller = new AbortController();
     #hostObserver = null;
 
@@ -547,14 +548,9 @@ export default class MusicPlayer extends HTMLElement {
 
         if (currentAbsoluteTime < startTime) {
             this.seekPreviousTrack();
-            // this.#playlistTimestampsIndex--;
         } else if (currentAbsoluteTime >= endTime) {
             this.seekNextTrack();
-            // this.#playlistTimestampsIndex++;
         }
-        // let newSong = this.#playlistTimestamps[this.#playlistTimestampsIndex];
-        // let newSongStartTime = parseFloat(newSong.startTime);
-        // this.#audio.currentTime = newSongStartTime;
     }
 
     updateQueueOrder() {
