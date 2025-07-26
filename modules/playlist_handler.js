@@ -23,7 +23,7 @@ Decimal.set({ "precision": 500_000 });
 const { spawn } = require("child_process");
 
 const { find, update } = require("./database_handler.js");
-const { createFolder, createCMD } = require("./general_helpers.js");
+const { createFolder, createChildProcess } = require("./general_helpers.js");
 const ThreadManager = require("./ThreadManager.js");
 
 const PARENT_DIR = require.main.path;
@@ -41,7 +41,7 @@ const FFmpegThreadManager = new ThreadManager();
 async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
     link = link.trim().normalize("NFKC");
     if (!link.startsWith("youtube.com/playlist?list=")) {
-        throw Error("Invalid playlist link");
+        throw new Error("Invalid playlist link");
     }
     const trackI = link.indexOf("&si="); // Unnecessary tracking param
     const playlistId = link.substring(
@@ -52,7 +52,6 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
 
     const TIMEOUT_DELAY_MS = 1500;
     let nextPageToken = "";
-    let count = 0;
     do {
         const playlistItemsURL =
             `https://www.googleapis.com/youtube/v3/playlistItems?`+
@@ -90,7 +89,7 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
             .map(Video => JSON.stringify(Video))
             .join("\n");
         await fs.appendFile(tempVideosPath, `${filteredVideosStr}\n`);
-        console.log(++count);
+
 
     } while (nextPageToken);
 
@@ -104,11 +103,11 @@ async function parseYTLink(link, tempVideosPath, maxVideoLengthMinutes = 45) {
             }, timeoutDelayMS);
             res = await fetch(resource, options);
             clearTimeout(timeout);
-            if (!res.ok) throw Error(await res.text());
+            if (!res.ok) throw new Error(await res.text());
             return res;
         } catch (err) {
             controller.abort(err);
-            throw Error(res);
+            throw new Error(`${err}\tResponse: ${res}`);
         }
     }
 
@@ -290,7 +289,7 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
     const tempVideosPath = path.join(playlistDir, "tempVideos.txt");
     await parseYTLink(playlistUrl, tempVideosPath);
     const tempVideosReader = new TempVideoFileParser(tempVideosPath);
-    logPlaylist(username, null, tempVideosPath);
+    await logPlaylist(username, null, tempVideosPath);
 
     let song = null;
     while ((song = await tempVideosReader.readNextVideo()) !== null) {
@@ -317,7 +316,7 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         } catch (err) {
             handleSongDownloadError(songDir, song, err);
         }
-        song = null;
+
     }
 
     await setStartTimes(playlistTimestampsPath);
@@ -339,24 +338,22 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
  */
 function handleSongDownloadError(folderToRemove, song, err) {
     try {
-        // Timeout before removing failed songs
-        // Avoids errors from trying to immediately do this
-        setTimeout(() => {
-            fs.rm(folderToRemove, { "recursive": true, "force": true });
-        }, 1000);
+        fs.rm(folderToRemove, { "recursive": true, "force": true });
     } catch (e) {
         console.error(
-            Error(
+            new Error(
                 `ERROR WHILE TRYING TO REMOVE INVALID SONG FOLDER (${folderToRemove})`+
                 `\n${e.message || e}`,
                 { "cause": e.cause || err }
             )
         );
     }
+
     const filename = path.basename(folderToRemove);
     console.error(
-        Error(
-            `ERROR DURING VIDEO DOWNLOAD (${filename}, ${song.videoUrl})\n${err.message || err}\n`,
+        new Error(
+            `ERROR DURING VIDEO DOWNLOAD`+
+            `(${filename}, ${song.videoUrl})\n${err.message || err}\n`,
             { "cause": err.cause }
         )
     );
@@ -400,15 +397,15 @@ async function getSongLength(m3u8_path) {
         "-of", "csv=p=0"
     ];
     const cwd = path.dirname(m3u8_path);
-    const { cmd, done } = createCMD("ffprobe", commands, { cwd });
+    const { childProcess, done } = createChildProcess("ffprobe", commands, { cwd });
 
     let length = "";
-    cmd.stdout.on("data", d => length += d.toString().trim());
-    cmd.stderr.on("error", err => {});
+    childProcess.stdout.on("data", d => length += d.toString().trim());
+    childProcess.stderr.on("error", err => {});
     
     await done;
-    cmd.removeAllListeners();
-    cmd.destroy();
+    childProcess.removeAllListeners();
+    childProcess.kill(0);
     return length.trim();
 }
 
@@ -471,7 +468,6 @@ async function logPlaylist(username = "", videos = null, tempVideosPath = "") {
             }
         } catch (err) {
             console.error(err);
-            return;
         }
     }
 
@@ -494,23 +490,29 @@ async function logPlaylist(username = "", videos = null, tempVideosPath = "") {
  * @param {string} filename Song file/folder name
  * @param {number} quality Overall quality of audio (0 highest - 9 lowest)
  * @param {number} segmentTime Length of audio chunks
- * @returns {Promise<void>}
+ * @returns {Promise<string>} Video's folder path
  */
 function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10) {
     return new Promise(async (resolve, reject) => {
-        const options = { "cwd": path.join(playlistDir, filename) };
-        let ytdlp, filterFFmpeg, encodeFFmpeg;
+        const options2 = { "cwd": path.join(playlistDir, filename) };
+        let ytdlp = null, filterFFmpeg = null, encodeFFmpeg = null;
         try {
-            ytdlp = createCMD("yt-dlp", [
-                `-f`, `bestaudio[ext=webm]`,
+            ytdlp = createChildProcess("yt-dlp", [
+                `-f`, `bestaudio[ext=m4a]`,
                 `--ignore-errors`, `--geo-bypass`,
                 `-o`, `-`,
                 `${url}`,
-            ], options);
+            ], options2);
+            if (!ytdlp) throw new Error(`YT-DLP PROCESS FAILED INIT:\t${ytdlp}`);
+            ytdlp.childProcess.stdout.on("error", err => {
+                throw new Error(`YT-DLP ERR!\t${err.toString()}`);
+            });
+            ytdlp.childProcess.stderr.on("data", data => {});
+            ytdlp.childProcess.stderr.on("error", err => {});
             
             FFmpegThreadManager.addProcess();
             const threads = FFmpegThreadManager.getAvailableThreadCount();
-            filterFFmpeg = createCMD("ffmpeg", [
+            filterFFmpeg = createChildProcess("ffmpeg", [
                 `-threads`, threads,
                 `-filter_threads`, threads,
                 `-filter_complex_threads`, threads,
@@ -519,8 +521,13 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
                 `-f`, `wav`,
                 `-c:a`, `pcm_s16le`,
                 `pipe:1`
-            ], options);
-            encodeFFmpeg = createCMD("ffmpeg", [
+            ], options2);
+            if (!filterFFmpeg) throw new Error(`FILTER-FFMPEG PROCESS FAILED INIT:\t${filterFFmpeg}`);
+            filterFFmpeg.childProcess.stderr.on("error", err => {});
+
+            handleStreamPiping(ytdlp.childProcess.stdout, filterFFmpeg.childProcess.stdin);
+
+            encodeFFmpeg = createChildProcess("ffmpeg", [
                 `-hide_banner`,
                 `-loglevel`, `error`,
                 `-threads`, threads,
@@ -534,35 +541,35 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
                 `-hls_time`, segmentTime,
                 `-hls_segment_filename`, `${filename}_%05d.ts`,
                 `${filename}.m3u8`
-            ], options);
+            ], options2);
+            if (!encodeFFmpeg) throw new Error(`ENCODE-FFMPEG PROCESS FAILED INIT:\t${encodeFFmpeg}`);
+            encodeFFmpeg.childProcess.stderr.on("error", err => {});
 
-            ytdlp.cmd.stdout.on("error", err => {
-                console.error(err.toString());
-            });
-            ytdlp.cmd.stderr.on("data", data => {});
-            ytdlp.cmd.stderr.on("error", err => {});
-            filterFFmpeg.cmd.stderr.on("error", err => {});
-            encodeFFmpeg.cmd.stderr.on("error", err => {});
-
-            handleStreamPiping(ytdlp.cmd.stdout, filterFFmpeg.cmd.stdin);
-            handleStreamPiping(filterFFmpeg.cmd.stdout, encodeFFmpeg.cmd.stdin);
-
+            handleStreamPiping(filterFFmpeg.childProcess.stdout, encodeFFmpeg.childProcess.stdin);
             await encodeFFmpeg.done;
+
             FFmpegThreadManager.removeProcess();
-            cleanup(ytdlp.cmd);
-            cleanup(filterFFmpeg.cmd);
-            cleanup(encodeFFmpeg.cmd);
-            resolve(); 
+            cleanup(ytdlp.childProcess);
+            cleanup(filterFFmpeg.childProcess);
+            cleanup(encodeFFmpeg.childProcess);
+            resolve(options2["cwd"]);
         } catch (err) {
             FFmpegThreadManager.removeProcess();
-            cleanup(ytdlp.cmd);
-            cleanup(filterFFmpeg.cmd);
-            cleanup(encodeFFmpeg.cmd);
+            cleanup(ytdlp.childProcess);
+            cleanup(filterFFmpeg.childProcess);
+            cleanup(encodeFFmpeg.childProcess);
             reject(err);
         }
         function cleanup(childProcess) {
-            childProcess.removeAllListeners();
-            childProcess.kill();
+            try {
+                childProcess.removeAllListeners();
+                childProcess.kill();
+            } catch (err) {
+                console.error(new Error(
+                    `FAILED TRYING TO CLEAN UP PROCESS:\t${childProcess}`,
+                    { "cause": err }
+                ));
+            }
         }
         function handleStreamPiping(readStream, writeStream) {
             readStream.on("data", chunk => {
@@ -660,8 +667,10 @@ function adjustSongPaths(parentDir, m3u8) {
 async function createPlaylistFolder(userFolder) {
     let folderPath, i = 0;
     do {
-        if (i > 100_000) throw Error("ERROR: excessive playlist folder creation attempts");
-        const playlistFolderDir = path.join(PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`);
+        if (i > 100_000) throw new Error("Excessive playlist folder creation attempts");
+        const playlistFolderDir = path.join(
+            PARENT_DIR, "user_playlists", userFolder, `playlist_${i++}`
+        );
         folderPath = await createFolder(playlistFolderDir);
     } while (folderPath === null);
     return folderPath;

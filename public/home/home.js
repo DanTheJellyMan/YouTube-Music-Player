@@ -1,13 +1,13 @@
 import MusicPlayer from "./MusicPlayer.js";
 globalThis["MusicPlayer"] = MusicPlayer;
 
+const playlistListHeader = document.querySelector("#playlist-list-header");
+const playlistList = document.querySelector("#playlist-list");
+
 const FETCH_INTERVAL_SECONDS = 30;
 let gettingPlaylists = false;
 fetchPlaylists();
 setInterval(fetchPlaylists, 1000 * FETCH_INTERVAL_SECONDS);
-
-const playlistListHeader = document.querySelector("#playlist-list-header");
-const playlistList = document.querySelector("#playlist-list");
 
 document.querySelector("#toggle-menu").onclick = toggleMenu;
 document.querySelector("#add-new-playlist").onclick = toggleForm;
@@ -46,7 +46,7 @@ async function uploadPlaylist() {
 }
 
 async function fetchPlaylists() {
-    if (gettingPlaylists) return;
+    if (gettingPlaylists || (playlistList && !playlistList.children)) return;
     const controller = new AbortController();
     gettingPlaylists = true;
     toggleFetching(1);
@@ -74,8 +74,10 @@ async function fetchPlaylists() {
         return;
     }
 
-    if (playlistList.children instanceof HTMLCollection) {
-        for (const el of playlistList.children) el.remove();
+    let plListHeight = parseFloat(getComputedStyle(playlistList).height);
+    const scrollTopPercent = playlistList.scrollTop * 100 / (playlistList.scrollHeight-plListHeight);
+    while (playlistList.firstChild) {
+        playlistList.firstChild.remove();
     }
 
     const playlists = await res.json();
@@ -83,6 +85,8 @@ async function fetchPlaylists() {
         const el = createPlaylistEl(playlist);
         playlistList.appendChild(el);
     }
+    plListHeight = parseFloat(getComputedStyle(playlistList).height);
+    playlistList.scrollTo(0, (playlistList.scrollHeight-plListHeight) * scrollTopPercent / 100);
 
     endFetchingMode();
     function endFetchingMode() {

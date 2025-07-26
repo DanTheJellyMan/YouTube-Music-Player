@@ -1,15 +1,5 @@
 const usernameInput = document.querySelector("#username");
 const passwordInput = document.querySelector("#password");
-const requirements = Object.freeze({
-    "username": {
-        "sizeRegex": /^.{3,100}$/g,
-        "charRegex": /[A-Za-z_\-.0-9]+/g
-    },
-    "password": {
-        "sizeRegex": /^.{3,200}$/g,
-        "charRegex": /.+/g
-    }
-});
 const REQUEST_TIMEOUT_SECONDS = 60;
 
 /**
@@ -48,8 +38,8 @@ async function account(url) {
 }
 
 function validateInput(username, password) {
-    const { sizeRegex: unameSizeRegex, charRegex: unameCharRegex } = requirements["username"];
-    const { sizeRegex: pwordSizeRegex, charRegex: pwordCharRegex } = requirements["password"];
+    const { sizeRegex: unameSizeRegex, charRegex: unameCharRegex } = getUsernameRequirements();
+    const { sizeRegex: pwordSizeRegex, charRegex: pwordCharRegex } = getPasswordRequirements();
 
     const reasons = [];
     let ok = false;
@@ -72,4 +62,17 @@ function validateInput(username, password) {
         alert(reasons.join("\n"));
     }
     return ok;
+}
+
+function getUsernameRequirements() {
+    return {
+        "sizeRegex": /^.{3,100}$/g,
+        "charRegex": /^[A-Za-z_\-.0-9]+$/g
+    }
+}
+function getPasswordRequirements() {
+    return {
+        "sizeRegex": /^.{3,200}$/g,
+        "charRegex": /^.+$/g
+    }
 }

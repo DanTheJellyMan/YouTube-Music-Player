@@ -33,7 +33,7 @@ export default class Pinger {
         timeout = setTimeout(handleError, 1000 * this.#pingIntervalSeconds);
 
         const startMS = performance.now();
-        this.#img.src = `https://i.ytimg.com?nocache=${Date.now()}`;
+        this.#img.src = `https://i.ytimg.com?nocache=${crypto.randomUUID()}`;
         this.#img.addEventListener("load", handleLoad, { "once": true });
         this.#img.addEventListener("error", handleError, { "once": true });
     }

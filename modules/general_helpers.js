@@ -64,56 +64,71 @@ function includes(str, comparisons, charsToMatch = 0) {
 }
 
 /**
+ * Alternate method of creating a folder (non-recursively)
  * @param {string} path Absolute path
- * @returns {Promise<path | null>} Resolves to inputted path, or null if dir creation fails
+ * @returns {Promise<path | null>} Resolves to inputted path, or null if dir creation fails. Never rejects.
  */
 async function createFolder(path) {
     try {
         await fs.mkdir(path, { "recursive": false });
         return path;
     } catch (err) {
-        // console.error(err, `aborted folder creation of ${path}`);
         return null;
     }
 }
 
 /**
- * Creates a child process spawn
+ * Creates a child process spawn, with some built in error handling
  * @param {string} command
  * @param {string[]} options
  * @param {SpawnOptionsWithoutStdio} options2 Typically contains { cwd: [PROCESS DIRECTORY] }
- * @returns {{"cmd": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} Resolve upon process close
+ * @returns {{"childProcess": ChildProcessWithoutNullStreams, "done": Promise<string>} | null} "done" promise resolves upon process exit
  */
-function createCMD(command, options, options2 = { "cwd": PARENT_DIR }) {
-    let cmd;
+function createChildProcess(command, options, options2 = { "cwd": PARENT_DIR }) {
+    let childProcess = null
+    let initSuccess = false;
     try {
-        cmd = spawn(command, options, options2);
-    } catch (err) { console.error(err.toString()); return null; }
-    cmd.stdout.on("data", data => {});
-    cmd.stdout.on("error", err => {});
-    cmd.stdin.on("data", data => {});
-    cmd.stdin.on("error", err => {});
-    cmd.stderr.on("data", err => {});
-    cmd.stderr.on("error", err => {});
-    cmd.on("error", err => {});
-    
-    const done = new Promise((resolve, reject) => {
-        try {
-            cmd.on("exit", code => {
-                cmd.removeAllListeners();
-                if (code !== 0 && command !== "ffprobe") {
-                    return reject(
-                        Error(`${command} CMD EXITED WITH ERROR CODE ${code}`)
-                    );
-                }
-                return resolve(`${code}`);
-            });
-        } catch (err) {
-            return reject(err);
-        }
-    });
+        childProcess = spawn(command, options, options2);
+        childProcess.stdout.on("data", data => {});
+        childProcess.stdout.on("error", err => {});
+        childProcess.stdin.on("data", data => {});
+        childProcess.stdin.on("error", err => {});
+        childProcess.stderr.on("data", err => {});
+        childProcess.stderr.on("error", err => {});
+        childProcess.on("error", err => {});
 
-    return { cmd, done };
+        if (!childProcess || !childProcess.stdout || !childProcess.stdin || !childProcess.stdio) {
+            throw Error(`ERROR DURING ${command} PROCESS INIT`);
+        }
+        
+        const done = new Promise((resolve, reject) => {
+            try {
+                childProcess.once("exit", code => {
+                    if (code === 0) return resolve(`${code}`);
+                    return reject(
+                        new Error(`${command} childProcess EXITED WITH ERROR CODE ${code}`)
+                    );
+                });
+            } catch (err) {
+                return reject(err);
+            }
+        });
+        done.catch(() => {});
+
+        initSuccess = true;
+        return { childProcess, done };
+    } catch (err) {
+        console.error(err);
+        if (childProcess) {
+            childProcess.removeAllListeners();
+            childProcess.kill();
+            childProcess = null;
+        }
+        if (!initSuccess) {
+            initSuccess = null;
+            return null;
+        }
+    }
 }
 
 module.exports = {
@@ -123,5 +138,5 @@ module.exports = {
     includes,
 
     createFolder,
-    createCMD
+    createChildProcess
 }

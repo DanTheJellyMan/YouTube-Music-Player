@@ -25,7 +25,9 @@
 ```
 
 **What I personally use:**
+
 *Note: **[REDACTED]** is used to hide my private info*
+
 ```
 
 {
