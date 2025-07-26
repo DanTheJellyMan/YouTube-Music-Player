@@ -9,6 +9,7 @@ export default class MusicPlayer extends HTMLElement {
 
     #id = crypto.randomUUID();
     #controller = new AbortController();
+    #queueController = new AbortController();
     #hostObserver = null;
 
     #hls = new Hls();
@@ -539,7 +540,9 @@ export default class MusicPlayer extends HTMLElement {
         const endTimeLabel = shadow.querySelector(".time-label.end");
         endTimeLabel.textContent = MusicPlayer.formatSeconds(length);
     }
-    
+    /**
+     * Used only on time updates
+     */
     #setCorrectSong() {
         const currentAbsoluteTime = this.currentTime(true);
         const currentTimestamp = this.#playlistTimestamps[this.#playlistTimestampsIndex];
@@ -556,20 +559,21 @@ export default class MusicPlayer extends HTMLElement {
     updateQueueOrder() {
         const queue = this.shadowRoot.querySelector("#queue");
         if (!queue) return console.warn("No queue element found");
-        for (const child of queue.children) this.#removeQueueItem(child);
+        this.#queueController.abort();
+        while (queue.firstChild) {
+            queue.firstChild.remove();
+        }
 
         const { songs } = this.#playlist;
         for (let i=0; i<songs.length; i++) {
             const timestamp = this.#playlistTimestamps[i];
             
             const item = createQueueItem(songs[i], timestamp, () => {
+                this.#playlistTimestampsIndex = i;
                 this.#audio.currentTime = parseFloat(timestamp.startTime);
-            }, this.#controller.signal);
+            }, this.#queueController.signal);
             queue.appendChild(item);
         }
-    }
-    #removeQueueItem(item) {
-        item.remove();
     }
 
     #detectLandscape() {
@@ -707,7 +711,6 @@ export default class MusicPlayer extends HTMLElement {
 
     /**
      * Set the attributes of container equal to the host element's
-     * @returns {void}
      **/
     #equalizeHostAndContainerAttribs() {
         const shadow = this.shadowRoot;

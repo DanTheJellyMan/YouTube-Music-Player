@@ -316,9 +316,11 @@ async function downloadPlaylist(db, table, username, playlistUrl, quality = 6, s
         } catch (err) {
             handleSongDownloadError(songDir, song, err);
         }
-
     }
 
+    fs.rm(tempVideosPath, { "force": true }).catch(err => {
+        console.error(new Error("FAILED TO REMOVE TEMP FILE", { "cause": err }));
+    });
     await setStartTimes(playlistTimestampsPath);
     await makePlaylistFile(playlistDir);
 
@@ -525,8 +527,6 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             if (!filterFFmpeg) throw new Error(`FILTER-FFMPEG PROCESS FAILED INIT:\t${filterFFmpeg}`);
             filterFFmpeg.childProcess.stderr.on("error", err => {});
 
-            handleStreamPiping(ytdlp.childProcess.stdout, filterFFmpeg.childProcess.stdin);
-
             encodeFFmpeg = createChildProcess("ffmpeg", [
                 `-hide_banner`,
                 `-loglevel`, `error`,
@@ -545,6 +545,7 @@ function downloadVideo(url, playlistDir, filename, quality = 6, segmentTime = 10
             if (!encodeFFmpeg) throw new Error(`ENCODE-FFMPEG PROCESS FAILED INIT:\t${encodeFFmpeg}`);
             encodeFFmpeg.childProcess.stderr.on("error", err => {});
 
+            handleStreamPiping(ytdlp.childProcess.stdout, filterFFmpeg.childProcess.stdin);
             handleStreamPiping(filterFFmpeg.childProcess.stdout, encodeFFmpeg.childProcess.stdin);
             await encodeFFmpeg.done;
 

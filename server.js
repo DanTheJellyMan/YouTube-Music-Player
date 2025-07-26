@@ -162,7 +162,7 @@ app.post("/upload-playlist", async (req, res) => {
         await playlistHandler.downloadPlaylist(
             USER_DB, "users", username, url, quality, segmentTime, maxVideos
         );
-        console.log(`${username} - Finished downloading playlist from URL:\t${url}`);
+        console.log(`${username} - Finished downloading playlist from URL: ${url}`);
     } catch (err) {
         console.error(err);
         if (!res.headersSent) res.status(401).end();
@@ -234,7 +234,7 @@ function httpHeaderMiddleware(res, filepath) {
 /**
  * Set login credentials in cookies for quick login next time
  * 
- * (Not secure, should ideally create session tokens instead, but idgaf)
+ * (Not secure, should ideally create session tokens instead, but IDGAF)
  * @param {Response<any, Record<string, any>} res 
  * @param {string} username 
  * @param {string} password 
