@@ -1,4 +1,83 @@
 import Pinger from "./Pinger.js";
+import CustomMarquee from "./CustomMarquee.js";
+
+const template = document.createElement("template");
+template.innerHTML = `
+<div id="container">
+    <header>
+        <div id="open-settings">
+            <div></div>
+            <div></div>
+            <div></div>
+        </div>
+        <div id="move-handle" draggable="true"></div>
+        <div id="close"></div>
+    </header>
+
+    <div id="settings">
+        <div>
+            <button>Shuffle playlist</button>
+        </div>
+    </div>
+
+    <div id="body">
+        <main>
+            <custom-marquee id="title" padding="20%">
+                <a target="_blank" href="">Song_Title</a>
+            </custom-marquee>
+
+            <div id="thumbnail">
+                <img alt="Song thumbnail" loading="lazy" draggable="false">
+            </div>
+            
+            <div id="author">
+                <a target="_blank" href="">Song_Author</a>
+            </div>
+
+            <div id="timeline">
+                <div>
+                    <p class="time-label start">0:00</p>
+                    <input id="progress" type="range" step="0.01" max="1" value="0">
+                    <p class="time-label end">0:00</p>
+                </div>
+            </div>
+
+            <div id="controls">
+                <div class="track previous">
+                    <div>
+                        <div></div>
+                        <div></div>
+                        <div></div>
+                    </div>
+                </div>
+
+                <div id="play-button">
+                    <div>
+                        <div></div>
+                        <div></div>
+                    </div>
+                </div>
+                
+                <div class="track next">
+                    <div>
+                        <div></div>
+                        <div></div>
+                        <div></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div id="open-queue">
+                <div></div>
+            </div>
+
+            <div id="queue"></div>
+        </footer>
+    </div>
+</div>
+`;
 
 export default class MusicPlayer extends HTMLElement {
     static #pinger = new Pinger(60);
@@ -10,7 +89,7 @@ export default class MusicPlayer extends HTMLElement {
     #id = crypto.randomUUID();
     #controller = new AbortController();
     #queueController = new AbortController();
-    #hostObserver = null;
+    #hostResizeObserver = null;
 
     #hls = new Hls();
     #audio = new Audio();
@@ -31,19 +110,20 @@ export default class MusicPlayer extends HTMLElement {
     #checkKeysTimeout = setTimeout(() => {});
     #checkKeysDelayMS = 250;
     #keyWasRaised = false;
-    
     // Max time for setInterval
     #repeatKeyPressInterval = setInterval(() => {}, 2147483647);
     #heldKeysSet = new Set();
+    #infoUpToDate = false;
 
     /*
         IMPORTANT: make sure to add custom attributes to BOTH
         host (music-player) and the container.
 
         This is so attributeChangedCallback() will trigger while still allowing
-        CSS attribute-dependent features to still work
+        CSS attribute-dependent features to still work.
         
-        :host[some-attrib='true'] doesn't work
+        :host[some-attrib='true'] doesn't work.
+        If :host-context() was widely supported, #container wouldn't be needed.
     */
     
     constructor() {
@@ -83,7 +163,6 @@ export default class MusicPlayer extends HTMLElement {
         // Append content to shadow root
         const shadow = this.shadowRoot;
         shadow.host.tabIndex = "0";
-        const template = document.querySelector("#music-player-template");
         shadow.appendChild(template.content.cloneNode(true));
 
         // Precaution in case attribs were set on host before DOM attachment
@@ -109,8 +188,8 @@ export default class MusicPlayer extends HTMLElement {
         // Avoids issues of un-initialized CSS properties being used
         waitForStyleInit(handleResizeObserver);
 
-        this.#hostObserver = new ResizeObserver(handleResizeObserver);
-        this.#hostObserver.observe(host);
+        this.#hostResizeObserver = new ResizeObserver(handleResizeObserver);
+        this.#hostResizeObserver.observe(host);
 
         host.addEventListener("keydown", e => {
             e.preventDefault();
@@ -134,6 +213,7 @@ export default class MusicPlayer extends HTMLElement {
         }, { signal });
 
         const main = body.querySelector("main");
+        const title = this.shadowRoot.querySelector("custom-marquee#title");
         const controls = main.querySelector("#controls");
         const playBtn = controls.querySelector("#play-button");
         playBtn.firstElementChild.addEventListener("click", () => {
@@ -172,11 +252,14 @@ export default class MusicPlayer extends HTMLElement {
             // Use container's dimensions since they are slightly smaller than host's
             const { width, height } = container.getBoundingClientRect();
             host.#resizeQueue(width, height);
+
+            title.initScroller.call(title.shadowRoot.querySelector("slot"));
         }
 
-        function waitForStyleInit(callback = function(){}, PAGE_RENDERS_BEFORE_OK = 10) {
-            for (let renders = 0; renders < PAGE_RENDERS_BEFORE_OK; renders++) {
-                callback = () => requestAnimationFrame(callback);
+        function waitForStyleInit(callback = function(){}, pageRendersBeforeOk = 10) {
+            for (let renders = 0; renders < pageRendersBeforeOk; renders++) {
+                const next = callback;
+                callback = () => requestAnimationFrame(next);
             }
             callback();
         }
@@ -208,7 +291,8 @@ export default class MusicPlayer extends HTMLElement {
         this.#audio = null;
 
         this.#controller.abort();
-        this.#hostObserver.disconnect();
+        this.#hostResizeObserver.disconnect();
+
         console.log("music player deleted");
     }
 
@@ -262,6 +346,7 @@ export default class MusicPlayer extends HTMLElement {
             this.#playlistTimestamps[nextIndex].startTime
         );
         this.#audio.currentTime = endTime;
+        this.#infoUpToDate = false;
     }
     seekPreviousTrack() {
         const minIndex = 0;
@@ -272,6 +357,7 @@ export default class MusicPlayer extends HTMLElement {
             this.#playlistTimestamps[prevIndex].startTime
         );
         this.#audio.currentTime = startTime;
+        this.#infoUpToDate = false;
     }
 
     #handleProgressSeek(e) {
@@ -446,6 +532,7 @@ export default class MusicPlayer extends HTMLElement {
         this.#audio.currentTime = parseFloat(
             this.#playlistTimestamps[this.#playlistTimestampsIndex].startTime
         );
+        this.#infoUpToDate = false;
         
         this.#alignPlaylistToTimestampsOrder();
         this.updateQueueOrder();
@@ -513,23 +600,30 @@ export default class MusicPlayer extends HTMLElement {
         const startTimeLabel = shadow.querySelector(".time-label.start");
         startTimeLabel.textContent = MusicPlayer.formatSeconds(CURRENT_RELATIVE_TIME);
         progress.value = CURRENT_RELATIVE_TIME;
+        if (this.#infoUpToDate) return;
+        this.#infoUpToDate = true;
 
-        const titleAnchor = shadow.querySelector("#title > a");
-        if (titleAnchor.textContent === title) return;
+        const titleMarquee = shadow.querySelector("custom-marquee#title");
+        const randomTitleClone = titleMarquee.shadowRoot.querySelector("p");
+        const titleAnchor = document.createElement("a");
         titleAnchor.textContent = title;
         titleAnchor.href = videoUrl;
+        titleAnchor.target = "_blank";
+        titleMarquee.init(titleAnchor);
 
         const thumbnail_img = shadow.querySelector("#thumbnail > img");
         thumbnail_img.src = "";
         const ping = MusicPlayer.getPing();
         const LOW_PING = 150;
         const MEDIUM_PING = 400;
-        if (ping < LOW_PING) {
-            thumbnail_img.src = thumbnails.high;
-        } else if (ping < MEDIUM_PING) {
-            thumbnail_img.src = thumbnails.medium;
-        } else {
-            thumbnail_img.src = thumbnails.low;
+        if (!Object.values(thumbnails).includes(thumbnail_img.src)) {
+            if (ping < LOW_PING) {
+                thumbnail_img.src = thumbnails.high;
+            } else if (ping < MEDIUM_PING) {
+                thumbnail_img.src = thumbnails.medium;
+            } else {
+                thumbnail_img.src = thumbnails.low;
+            }
         }
 
         const authorAnchor = shadow.querySelector("#author > a");
@@ -571,6 +665,7 @@ export default class MusicPlayer extends HTMLElement {
             const item = createQueueItem(songs[i], timestamp, () => {
                 this.#playlistTimestampsIndex = i;
                 this.#audio.currentTime = parseFloat(timestamp.startTime);
+                this.#infoUpToDate = false;
             }, this.#queueController.signal);
             queue.appendChild(item);
         }
@@ -634,30 +729,35 @@ export default class MusicPlayer extends HTMLElement {
             return;
         }
         const host = this;
-        const container = host.shadowRoot.querySelector("#container");
-        const header = container.querySelector("header");
-        const body = container.querySelector("#body");
-        const footer = body.querySelector("footer");
+        const footer = host.shadowRoot.querySelector("footer");
+        const queue = footer.querySelector("#queue");
 
         // Set transition style incase a resize happened while footer was expanded
         const hostCompStyle = getComputedStyle(host);
-        const footerTransitionDur = hostCompStyle.getPropertyValue("--footer-transition-duration");
-        const footerTransitionTiming = hostCompStyle.getPropertyValue("--footer-transition-timing-function");
+        const footerTransitionDur = hostCompStyle.getPropertyValue(
+            "--footer-transition-duration"
+        );
+        const footerTransitionTiming = hostCompStyle.getPropertyValue(
+            "--footer-transition-timing-function"
+        );
         footer.style.transition = `transform ${footerTransitionDur} ${footerTransitionTiming}`;
 
         const transitionProp = host.#stopActiveFooterTransition();
-
         if (footer.getAttribute("open") === "false" && e.deltaY > 0) {
-            // Expand footer
             this.#handleQueueOpen(e, true);
         } else {
-            // Manually handle scrolling
-            const bodyTop = body.scrollTop;
-            body.scrollTo(0, bodyTop + (e.deltaY / 2));
-
-            if (body.scrollTop === 0 && e.deltaY < 0) {
-                // Shrink footer
+            const scrollAmt = queue.scrollTop;
+            if (queue.scrollTop === 0 && e.deltaY < 0) {
                 footer.setAttribute("open", "false");
+            } else {
+                const sign = Math.sign(e.deltaY);
+                const queueHeight = queue.getBoundingClientRect().height;
+                const scrollPercent = 0.55;
+                queue.scrollTo({
+                    "top": scrollAmt + (queueHeight * scrollPercent * sign),
+                    "left": 0,
+                    "behavior": "smooth"
+                });
             }
         }
         footer.style.transition = transitionProp;

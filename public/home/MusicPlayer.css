@@ -37,8 +37,6 @@
     overflow: hidden;
 
     font-family: Roboto;
-    scrollbar-width: thin;
-    scroll-behavior: smooth;
 }
 
 :host > #container {
@@ -210,21 +208,21 @@ main > * {
     /* border-bottom: 2px solid white; */
 }
 
-/* TODO: make this scroll to the left infinitely, like YouTube Music (mobile) */
 main > #title {
     display: flex;
     justify-content: center;
     align-items: center;
 
-    height: 16.75%;
-    overflow: auto;
+    max-height: 16.75% !important;
+    overflow: hidden;
+
+    white-space: nowrap;
     scrollbar-width: thin;
 }
 main > #title > a {
     text-align: center;
     font-size: 1.5rem;
     font-weight: 1000;
-    overflow-wrap: break-word;
 }
 
 main > #thumbnail {
@@ -522,11 +520,11 @@ footer > #open-queue:hover > div {
 footer > #queue {
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    justify-content: flex-start;
+    align-items: flex-start;
     gap: 20px;
 
-    padding: 10px 5px;
+    padding: 10px 0;
     overflow-y: auto;
 
     background-color: var(--queue-color);
