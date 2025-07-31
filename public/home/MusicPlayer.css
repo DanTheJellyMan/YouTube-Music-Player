@@ -190,6 +190,7 @@ header > #close:active {
     flex-direction: column;
     /* justify-content: center; */
     align-items: center;
+    gap: 0.5rem;
 
     overflow: auto;
     scrollbar-width: none;
@@ -209,11 +210,12 @@ main > * {
 }
 
 main > #title {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
 
-    max-height: 16.75% !important;
+    min-height: max-content;
+    max-height: 16.75%;
     overflow: hidden;
 
     white-space: nowrap;
@@ -231,13 +233,12 @@ main > #thumbnail {
     align-items: center;
 
     height: 30%;
-    overflow-x: auto;
-    scrollbar-width: none;
-    overflow: visible;
+    overflow: hidden;
 }
 main > #thumbnail > img {
-    height: 90%;
-    aspect-ratio: 4 / 3;
+    width: 50%;
+    height: auto;
+    aspect-ratio: 4 / 3 !important;
 
     border-radius: 10px;
     box-shadow: 0px 1px 4px 2px hsla(0,0%,0%,0.75);
@@ -259,10 +260,9 @@ main > #thumbnail > img {
 main > #author {
     display: flex;
     justify-content: center;
-    align-items: flex-start;
+    align-items: center;
 
     height: 8.25%;
-    padding-top: 6px;
     overflow: hidden;
 }
 main > #author > a {
@@ -272,29 +272,29 @@ main > #author > a {
     overflow: hidden;
 
     font-weight: 500;
-    color: hsl(0,0%,20%);    
-    text-overflow: ellipsis;
+    color: hsl(0,0%,20%);
     white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 main > #timeline {
     display: flex;
     justify-content: center;
     align-items: center;
-    overflow: visible;
 
-    height: 10%;
+    /* height: 10%; */
+    overflow: hidden;
 }
 
 main > #timeline > div {
     display: grid;
     justify-content: center;
     align-items: center;
-    grid-template-columns: max-content 0.9fr max-content;
+    grid-template-columns: minmax(20%, max-content) 60% minmax(20%, max-content);
     grid-template-rows: 1fr;
-    gap: 10px;
-
-    width: 50%;
+    gap: max(10px, 5%);
+    
+    width: 80%;
     height: 100%;
     padding: 0;
     margin: 0;
@@ -305,12 +305,15 @@ main > #timeline > div {
 }
 
 #timeline > div > .time-label {
-    text-align: center;
+    text-align: end;
     
     font-size: 1rem;
 
     font-style: italic;
     color: hsl(0,0%,5%);
+}
+#timeline > div > .time-label:last-of-type {
+    text-align: start;
 }
 
 main > #controls {
@@ -524,7 +527,7 @@ footer > #queue {
     align-items: flex-start;
     gap: 20px;
 
-    padding: 10px 0;
+    padding: 0;
     overflow-y: auto;
 
     background-color: var(--queue-color);
@@ -632,8 +635,8 @@ img {
     );
 }
 #container[landscape='true'] > #body {
-    grid-template-columns: 1.15fr 0.85fr;
     grid-template-rows: 1fr;
+    grid-template-columns: 65% 35%;
 }
 #container[landscape='true'] > #body > * {
     overflow: hidden;
@@ -641,9 +644,15 @@ img {
 
 #container[landscape='true'] > #body > main {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    grid-template-rows: repeat(6, 1fr);
-    gap: 1rem 2rem;
+    --rows: 6;
+    --row-gap: 1px;
+    --cols: 5;
+    --col-gap: 2px;
+    grid-template-rows: repeat(var(--rows), calc(100% / var(--rows) - (var(--row-gap) * 5)));
+    grid-template-columns: repeat(var(--cols), calc(100% / var(--cols) - (var(--col-gap) * 5)));
+    gap: calc(var(--row-gap) * var(--rows)) calc(var(--col-gap) * var(--cols));
+
+    max-height: 100%;
 }
 #container[landscape='true'] > #body > main > * {
     width: 100%;
@@ -651,25 +660,27 @@ img {
 }
 
 #container[landscape='true'] > #body > main > #title {
-    grid-area: 1 / 4 / 3 / -1;
+    grid-area: 1 / 3 / 3 / 6;
     justify-content: flex-start;
     align-items: flex-end;
+
+    max-height: 100% !important;
 }
 #container[landscape='true'] > #body > main > #title > a {
     text-align: left;
 }
 
 #container[landscape='true'] > #body > main > #thumbnail {
-    grid-area: 1 / 1 / 4 / 4;
-    justify-content: flex-end;
-    align-items: flex-end;
+    /* justify-content: flex-end;
+    align-items: flex-end; */
+    grid-area: 1 / 1 / 4 / 3;
 }
 #container[landscape='true'] > #body > main > #thumbnail > img {
-    margin-right: 10%;
+
 }
 
 #container[landscape='true'] > #body > main > #author {
-    grid-area: 3 / 4 / 4 / -1;
+    grid-area: 3 / 3 / 4 / 6;
     justify-content: flex-start;
 }
 #container[landscape='true'] > #body > main > #author > a {
@@ -678,11 +689,11 @@ img {
 }
 
 #container[landscape='true'] > #body > main > #timeline {
-    grid-area: 4 / 1 / 5 / -1;
+    grid-area: 4 / 1 / 5 / 6;
 }
 
 #container[landscape='true'] > #body > main > #controls {
-    grid-area: 5 / 2 / -1 / 5;
+    grid-area: 5 / 1 / 7 / 6;
 }
 
 

@@ -5,9 +5,6 @@ template.innerHTML = `
         --gap: 2rem;
         --padding: 0px;
 
-        display: flex;
-        align-items: center;
-
         max-width: 100%;
         max-height: 100%;
         padding: 0;
@@ -37,7 +34,7 @@ template.innerHTML = `
         gap: var(--gap);
 
         width: max-content;
-        height: 100%;
+        height: max-content;
         padding: inherit;
         margin: inherit;
         box-sizing: border-box;
@@ -126,7 +123,6 @@ export default class CustomMarquee extends HTMLElement {
      * and assigned slot element hasn't changed. Call .init() instead if possible.
      */
     initScroller() {
-        console.log("#initScroller()", this)
         const shadow = this.parentElement.parentNode;
         const host = shadow.host;
         const scroller = shadow.querySelector("#scroller");

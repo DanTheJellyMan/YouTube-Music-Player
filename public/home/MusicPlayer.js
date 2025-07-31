@@ -213,7 +213,8 @@ export default class MusicPlayer extends HTMLElement {
         }, { signal });
 
         const main = body.querySelector("main");
-        const title = this.shadowRoot.querySelector("custom-marquee#title");
+        const title = body.querySelector("custom-marquee#title");
+        const thumbnail = body.querySelector("#thumbnail");
         const controls = main.querySelector("#controls");
         const playBtn = controls.querySelector("#play-button");
         playBtn.firstElementChild.addEventListener("click", () => {
@@ -245,13 +246,23 @@ export default class MusicPlayer extends HTMLElement {
             host.#detectLandscape();
 
             // Handle settings resizing
-            const transition = getComputedStyle(settings).getPropertyValue("transition");
+            // const transition = getComputedStyle(settings).getPropertyValue("transition");
             const { height: headerHeight } = header.getBoundingClientRect();
             host.style.setProperty("--settings-top", `${headerHeight}px`);
 
             // Use container's dimensions since they are slightly smaller than host's
             const { width, height } = container.getBoundingClientRect();
             host.#resizeQueue(width, height);
+
+            const thumbnailRect = thumbnail.getBoundingClientRect();
+            const thumbnailImg = thumbnail.querySelector("img");
+            if (thumbnailRect.width > thumbnailRect.height) {
+                thumbnailImg.style.width = "auto";
+                thumbnailImg.style.height = "75%";
+            } else {
+                thumbnailImg.style.width = "75%";
+                thumbnailImg.style.height = "auto";
+            }
 
             title.initScroller.call(title.shadowRoot.querySelector("slot"));
         }
@@ -724,10 +735,7 @@ export default class MusicPlayer extends HTMLElement {
     }
 
     #handleScroll(e) {
-        if (this.getAttrib("landscape") === "true") {
-            console.warn("scroll not allowed for landscape mode");
-            return;
-        }
+        const isLandscape = this.getAttrib("landscape") === "true";
         const host = this;
         const footer = host.shadowRoot.querySelector("footer");
         const queue = footer.querySelector("#queue");
@@ -743,11 +751,11 @@ export default class MusicPlayer extends HTMLElement {
         footer.style.transition = `transform ${footerTransitionDur} ${footerTransitionTiming}`;
 
         const transitionProp = host.#stopActiveFooterTransition();
-        if (footer.getAttribute("open") === "false" && e.deltaY > 0) {
+        if (footer.getAttribute("open") === "false" && e.deltaY > 0 && !isLandscape) {
             this.#handleQueueOpen(e, true);
         } else {
             const scrollAmt = queue.scrollTop;
-            if (queue.scrollTop === 0 && e.deltaY < 0) {
+            if (queue.scrollTop === 0 && e.deltaY < 0 && !isLandscape) {
                 footer.setAttribute("open", "false");
             } else {
                 const sign = Math.sign(e.deltaY);
@@ -783,7 +791,6 @@ export default class MusicPlayer extends HTMLElement {
 
         if (host.getAttrib("landscape") === "true" && footer.getAttribute("open") === "false") {
             footer.setAttribute("open", "true");
-            const queue = footer.querySelector("#queue");
             return;
         }
 
