@@ -118,6 +118,7 @@ header > #move-handle {
     flex: 1.25;
     height: 100%;
     cursor: grab !important;
+    user-select: none;
 }
 header > #move-handle:active {
     cursor: grabbing !important;
@@ -223,8 +224,11 @@ main > #title {
 }
 main > #title > a {
     text-align: center;
-    font-size: 1.5rem;
-    font-weight: 1000;
+
+    font-size: 1.25rem;
+
+    font-weight: 700;
+    color: hsl(0,0%,20%);
 }
 
 main > #thumbnail {
@@ -265,14 +269,14 @@ main > #author {
     height: 8.25%;
     overflow: hidden;
 }
-main > #author > a {
+#author > a {
     text-align: center;
 
     font-size: 1rem;
     overflow: hidden;
 
-    font-weight: 500;
-    color: hsl(0,0%,20%);
+    font-weight: 450;
+    color: hsl(0,0%,15%);
     white-space: nowrap;
     text-overflow: ellipsis;
 }
@@ -307,10 +311,11 @@ main > #timeline > div {
 #timeline > div > .time-label {
     text-align: end;
     
-    font-size: 1rem;
+    font-size: 0.85rem;
 
+    font-weight: 300;
     font-style: italic;
-    color: hsl(0,0%,5%);
+    color: hsl(0,0%,10%);
 }
 #timeline > div > .time-label:last-of-type {
     text-align: start;
@@ -594,6 +599,12 @@ img {
 .hidden {
     display: none;
     opacity: 0%;
+}
+a, custom-marquee#title {
+    text-decoration: none;
+}
+a:hover, custom-marquee#title:hover {
+    text-decoration: underline;
 }
 
 /* Adjust for vertical format */

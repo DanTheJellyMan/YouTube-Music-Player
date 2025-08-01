@@ -10,7 +10,7 @@ template.innerHTML = `
             <div></div>
             <div></div>
         </div>
-        <div id="move-handle" draggable="true"></div>
+        <div id="move-handle" draggable="false"></div>
         <div id="close"></div>
     </header>
 
@@ -175,35 +175,27 @@ export default class MusicPlayer extends HTMLElement {
         const { signal } = this.#controller;
         const host = this;
         const shadow = host.shadowRoot;
-        const container = shadow.querySelector("#container");
-        const header = container.querySelector("header");
-
-        const openSettings = header.querySelector("#open-settings");
-        const settings = container.querySelector("#settings");
-        openSettings.addEventListener("click", () => {
-            settings.toggleAttribute("open");
-        }, { signal });
 
         // Ensure element is fully parsed before any resizing
         // Avoids issues of un-initialized CSS properties being used
         waitForStyleInit(handleResizeObserver);
-
         this.#hostResizeObserver = new ResizeObserver(handleResizeObserver);
         this.#hostResizeObserver.observe(host);
-
         host.addEventListener("keydown", e => {
             e.preventDefault();
             this.#handleKeyDown(e.key);
         }, { signal });
-
         document.addEventListener("keyup", e => {
             e.preventDefault();
             this.#handleKeyUp(e.key);
         }, { signal });
 
-        const close = container.querySelector("#close");
-        close.addEventListener("click", () => {
-            this.remove();
+        const container = shadow.querySelector("#container");
+        const header = container.querySelector("header");
+        const openSettings = header.querySelector("#open-settings");
+        const settings = container.querySelector("#settings");
+        openSettings.addEventListener("click", () => {
+            settings.toggleAttribute("open");
         }, { signal });
 
         const body = container.querySelector("#body");
@@ -212,9 +204,58 @@ export default class MusicPlayer extends HTMLElement {
             this.#handleScroll(e);
         }, { signal });
 
+        const moveHandle = header.querySelector("#move-handle");
+        let hostDragStartX = -1, hostDragStartY = -1, dragStartX = -1, dragStartY = -1;
+        moveHandle.addEventListener("pointerdown", e => {
+            host.style.userSelect = "none";
+            body.setAttribute("inert", "");
+            const hostRect = host.getBoundingClientRect();
+            hostDragStartX = hostRect.x;
+            hostDragStartY = hostRect.y;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+        }, { signal });
+        const handleDragEnd = () => {
+            host.style.userSelect = "auto";
+            body.removeAttribute("inert");
+            hostDragStartX = hostDragStartY = dragStartX = dragStartY = -1;
+        }
+        host.addEventListener("pointermove", e => {
+            if (dragStartX === -1 || dragStartY === -1 ||
+                hostDragStartX === -1 || hostDragStartY === -1
+            ) return;
+            const newX = e.pageX - dragStartX + hostDragStartX;
+            const newY = e.pageY - dragStartY + hostDragStartY;
+            this.movePlayer(newX, newY, true);
+        }, { signal });
+        host.addEventListener("pointerup", handleDragEnd, { signal });
+        host.addEventListener("pointerout", handleDragEnd, { signal });
+        
+        const close = header.querySelector("#close");
+        close.addEventListener("click", () => {
+            this.remove();
+        }, { signal });
+
         const main = body.querySelector("main");
-        const title = body.querySelector("custom-marquee#title");
-        const thumbnail = body.querySelector("#thumbnail");
+        const title = main.querySelector("custom-marquee#title");
+        const thumbnail = main.querySelector("#thumbnail");
+        const progress = main.querySelector("#timeline > div > #progress");
+        progress.addEventListener("pointerout", () => {
+            const hoverLabel = document.querySelector("#hover-label");
+            if (hoverLabel) hoverLabel.remove();
+        }, { signal });
+        progress.addEventListener("pointermove", this.#handleProgressHover, { signal });
+        progress.addEventListener("pointerdown", e => {
+            this.pause();
+            const max = parseFloat(progress.max);
+            const { percentDecimal } = MusicPlayer.calcMouseXPosPercent(progress, e.clientX);
+            progress.value = max * percentDecimal;
+        }, { signal });
+        progress.addEventListener("pointerup", () => {
+            this.seek(parseFloat(progress.value) - this.currentTime(false));
+            this.play();
+        }, { signal });
+
         const controls = main.querySelector("#controls");
         const playBtn = controls.querySelector("#play-button");
         playBtn.firstElementChild.addEventListener("click", () => {
@@ -292,7 +333,6 @@ export default class MusicPlayer extends HTMLElement {
         }
     }
 
-    // Cleanup after removal from DOM
     disconnectedCallback() {
         this.#hls.destroy();
         this.#audio.pause();
@@ -307,7 +347,6 @@ export default class MusicPlayer extends HTMLElement {
         console.log("music player deleted");
     }
 
-    // Handle changes to element attributes (NOT PROPERTIES! e.g., this.playing)
     attributeChangedCallback(name, oldVal, newVal) {
         switch (name) {
 
@@ -371,10 +410,37 @@ export default class MusicPlayer extends HTMLElement {
         this.#infoUpToDate = false;
     }
 
-    #handleProgressSeek(e) {
-        e.preventDefault();
+    #handleProgressHover(e) {
         const progress = e.target;
+        const { percentDecimal, elRect: progressRect } = MusicPlayer.calcMouseXPosPercent(
+            progress, e.clientX
+        );
+        const max = parseFloat(progress.max);
+        const time = max * percentDecimal;
         
+        let hoverLabel = document.querySelector("#hover-label");
+        if (!hoverLabel) {
+            hoverLabel = document.createElement("p");
+            hoverLabel.id = "hover-label";
+            Object.assign(hoverLabel.style, {
+                "position": "fixed",
+                "display": "flex",
+                "justifyContent": "center",
+                "alignItems": "center",
+                "padding": "2px 4px",
+                "fontSize": "0.85rem",
+                "fontFamily": "Roboto",
+                "backgroundColor": "black",
+                "color": "white",
+                "opacity": "50%",
+                "zIndex": Number.MAX_SAFE_INTEGER
+            });
+            document.body.appendChild(hoverLabel);
+        }
+        const labelWidth = hoverLabel.getBoundingClientRect().width;
+        hoverLabel.textContent = MusicPlayer.formatSeconds(time);
+        hoverLabel.style.top = `${progressRect.y - progressRect.height*1.25}px`;
+        hoverLabel.style.left = `${progressRect.width * percentDecimal + progressRect.left - labelWidth/2}px`;
     }
 
     /*
@@ -422,6 +488,23 @@ export default class MusicPlayer extends HTMLElement {
         clearTimeout(this.#checkKeysTimeout);
         clearInterval(this.#repeatKeyPressInterval);
         this.#keyWasRaised = true;
+    }
+
+    movePlayer(x, y, absolute = false) {
+        const rect = this.getBoundingClientRect();
+        const move = (x, y) => {
+            this.style.left = `${
+                Math.min( Math.max(0, x), window.innerWidth - rect.width )
+            }px`;
+            this.style.top = `${
+                Math.min( Math.max(0, y), window.innerHeight - rect.height )
+            }px`;
+        }
+
+        if (absolute) {
+            return move(x, y);
+        }
+        move(x + rect.left, y + rect.top);
     }
 
     /*
@@ -870,6 +953,13 @@ export default class MusicPlayer extends HTMLElement {
             (container && oldContainerAttrib !== container.getAttribute(name))
         ) return true;
         return false;
+    }
+
+    static calcMouseXPosPercent(element, mouseX) {
+        const elRect = element.getBoundingClientRect();
+        const { left, width } = elRect;
+        const percentDecimal = Math.min( Math.max(0, (mouseX - left) / width), 1 );
+        return { elRect, percentDecimal };
     }
 
     /**
