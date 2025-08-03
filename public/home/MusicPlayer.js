@@ -224,8 +224,8 @@ export default class MusicPlayer extends HTMLElement {
             if (dragStartX === -1 || dragStartY === -1 ||
                 hostDragStartX === -1 || hostDragStartY === -1
             ) return;
-            const newX = e.pageX - dragStartX + hostDragStartX;
-            const newY = e.pageY - dragStartY + hostDragStartY;
+            const newX = e.clientX - dragStartX + hostDragStartX;
+            const newY = e.clientY - dragStartY + hostDragStartY;
             this.movePlayer(newX, newY, true);
         }, { signal });
         host.addEventListener("pointerup", handleDragEnd, { signal });
