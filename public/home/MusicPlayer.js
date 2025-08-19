@@ -240,16 +240,10 @@ export default class MusicPlayer extends HTMLElement {
         const title = main.querySelector("custom-marquee#title");
         const thumbnail = main.querySelector("#thumbnail");
         const progress = main.querySelector("#timeline > div > #progress");
-        progress.addEventListener("pointerout", () => {
-            const hoverLabel = document.querySelector("#hover-label");
-            if (hoverLabel) hoverLabel.remove();
-        }, { signal });
-        progress.addEventListener("pointermove", this.#handleProgressHover, { signal });
-        progress.addEventListener("pointerdown", e => {
+        progress.addEventListener("input", e => {
+            const val = progress.value;
             this.pause();
-            const max = parseFloat(progress.max);
-            const { percentDecimal } = MusicPlayer.calcMouseXPosPercent(progress, e.clientX);
-            progress.value = max * percentDecimal;
+            setTimeout(() => progress.value = val, 0);
         }, { signal });
         progress.addEventListener("pointerup", () => {
             this.seek(parseFloat(progress.value) - this.currentTime(false));
